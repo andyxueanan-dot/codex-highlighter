@@ -1,92 +1,114 @@
 # Codex Highlighter
 
-[English](README.en.md) | 简体中文
+English | [简体中文](README.zh-CN.md)
 
-> 非官方社区项目，与 OpenAI 无隶属或背书关系。Codex 更新可能改变内部页面结构并暂时影响兼容性。
+<p align="center">
+  <img src="assets/hero.png" alt="Codex Highlighter — persistent five-color highlights for desktop transcripts" width="100%">
+</p>
 
-Codex Highlighter 为 Windows 版 Codex 桌面应用增加一个功能：在聊天正文中选中文字，点击黄色荧光笔，保留高亮。
+<p align="center"><strong>Keep the important parts of your Codex conversations visible.</strong></p>
 
-它不包含翻译、解释、总结、AI 提示词或全局屏幕标记。
+<p align="center">
+  <img alt="Windows" src="https://img.shields.io/badge/Windows-10%20%7C%2011-0078D4?logo=windows">
+  <img alt="Version" src="https://img.shields.io/badge/version-1.1.0-ffca28">
+  <img alt="License" src="https://img.shields.io/badge/license-MIT-2ea44f">
+</p>
 
-## 使用
+> An unofficial community project. It is not affiliated with or endorsed by OpenAI. Codex updates may change internal UI structure and temporarily break compatibility.
 
-1. 双击 `Start-Codex-Highlighter.cmd`。
-2. 第一次启用时，程序会询问是否重启 Codex。选择“是”。
-3. 在 Codex 主对话或右侧对话中选中文字。
-4. 在选区下方选择黄、绿、青、粉、紫任一颜色。
-5. 鼠标悬停高亮文字，点击垃圾桶即可删除。
+Codex Highlighter adds one focused feature to the Windows Codex desktop app: select transcript text, choose a color, and keep a persistent highlight.
 
-重新框选已有高亮时，也可以直接改色或点击垃圾桶删除。
+It does not add translation, summarization, AI prompts, or a system-wide screen overlay.
 
-也可以在选中文字后按 `Ctrl+Shift+H` 添加或取消高亮。
+## Highlights
 
-颜色工具条会优先显示在选区下方，并避开 Codex 自带的“添加到对话”“更多”和“在侧边聊天中提问”菜单。程序运行后位于 Windows 系统托盘。退出托盘程序会立即撤掉当前页面上的高亮，但保留数据；下次启动后会恢复。
+| Feature | What it does |
+| --- | --- |
+| Five colors | Yellow, green, cyan, pink, and purple for different kinds of notes. |
+| Main + side chat | Works across the primary transcript and secondary conversation panels. |
+| Persistent anchors | Re-finds highlighted text after React updates, scrolling, and app restarts. |
+| Hover delete | Move the pointer over a highlight and remove it without selecting it again. |
+| Native-menu avoidance | Places the palette away from Codex's own selection actions. |
+| Local-first | Stores highlight records on your device; no project server is involved. |
 
-## 为什么第一次需要重启 Codex
+## See it in action
 
-Codex 没有向普通插件开放聊天正文的选区和样式接口。本工具让 Codex 以仅绑定 `127.0.0.1` 的 Chrome DevTools Protocol 端口启动，再把高亮脚本注入真实的 Chromium 文本页面。
+<p align="center">
+  <img src="assets/demo-palette.png" alt="Five-color palette working in a main transcript and side chat" width="100%">
+</p>
 
-它不会修改：
+<details>
+  <summary><strong>Hover to delete</strong></summary>
+  <br>
+  <img src="assets/demo-hover-delete.png" alt="A delete button appearing above highlighted text on hover" width="100%">
+</details>
 
-- Codex 官方安装目录或 `app.asar`
-- Codex 代码签名
-- 登录状态、API 配置或任务数据
-- 注册表、计划任务或开机启动项
+> The screenshots are rendered by the actual injection script on a privacy-safe local demo fixture. They contain no personal Codex conversations.
 
-## 持久化与稳定性
+## Quick start
 
-高亮数据保存在：
+Requirements: Windows 10 or 11 and the Codex desktop app.
+
+```powershell
+git clone https://github.com/andyxueanan-dot/codex-highlighter.git
+cd codex-highlighter
+.\build.ps1
+.\Start-Codex-Highlighter.cmd
+```
+
+1. Approve the one-time Codex restart when prompted.
+2. Select text in the main transcript or side chat.
+3. Choose yellow, green, cyan, pink, or purple.
+4. Hover highlighted text and click the trash button to remove it.
+
+Selecting an existing highlight also lets you recolor or delete it. The palette prefers a position below the selection and avoids Codex's native selection action menu.
+
+`Ctrl+Shift+H` also toggles the current selection.
+
+## How it works
+
+The helper launches Codex with a Chrome DevTools Protocol endpoint bound to `127.0.0.1`, then injects the highlighting runtime into the real Chromium renderer. Highlights use the CSS Highlights API, so the tool does not wrap or rewrite React-managed transcript nodes.
+
+Anchors include the exact quote, nearby text, position, message fingerprint, and page context. A mutation observer re-anchors highlights after virtualized or React-rendered content changes.
+
+Local highlight data is stored at:
 
 ```text
 %LOCALAPPDATA%\CodexHighlighter\highlights.json
 ```
 
-每条高亮保存任务地址、消息指纹、原文、前后文和文字位置。页面滚动、React 重新渲染或重新打开任务时，脚本会重新定位文字。显示使用 Chromium CSS Highlights API，不修改 React 管理的聊天 DOM。
+## Build
 
-当前已验证 Codex `26.818.5229.0`、Chromium 151。Codex 更新如果改变内部页面结构，托盘会显示连接异常；重新加载失败时可退出工具，Codex 本身仍可正常使用。日志位于：
-
-```text
-%LOCALAPPDATA%\CodexHighlighter\CodexHighlighter.log
-```
-
-## 构建和测试
-
-项目使用 Windows 自带的 .NET Framework C# 编译器，不需要安装 .NET SDK：
+The native tray helper builds with the .NET Framework C# compiler included with Windows:
 
 ```powershell
 .\build.ps1
 ```
 
-输出文件：
+Output:
 
 ```text
 dist\CodexHighlighter.exe
 ```
 
-完整自动测试：
+## Tests
+
+The test suite checks JavaScript syntax, embedded resources, data validation, Codex discovery, loopback ports, and real Chromium behavior for main/side transcript selection, five colors, native-menu avoidance, re-anchoring, adjacent selections, recoloring, and hover deletion.
 
 ```powershell
 .\tests\run-tests.ps1
 ```
 
-测试覆盖 JavaScript 语法、嵌入资源、数据格式、Codex 安装定位、本机端口，以及真实 Chromium 中的主/侧对话选区、五色高亮、原生菜单避让、DOM 重建后重新锚定、相邻选区、改色和悬停删除。
+The browser test needs Node.js, Playwright, and Chrome or Edge. The native integration self-test expects Codex to be installed and running.
 
-## 删除
+## Security
 
-1. 从系统托盘退出 Codex Highlighter。
-2. 删除本项目目录。
-3. 如果也要删除所有高亮记录，再删除 `%LOCALAPPDATA%\CodexHighlighter`。
+While the helper is running, another process under the same Windows account may be able to access the local debugging endpoint. Do not use it on an untrusted shared account. See [SECURITY.md](SECURITY.md).
 
-没有其他安装项需要清理。
+## Uninstall
 
-## 安全提示
+Exit the yellow tray icon, delete the project or installed executable, and optionally delete `%LOCALAPPDATA%\CodexHighlighter` to remove saved highlights. The tool creates no startup task or registry installation entry.
 
-工具运行期间，Codex 会开放一个仅绑定 `127.0.0.1` 的调试端口。同一 Windows 账户下的其他本地进程理论上也可能访问它。不要在不可信的共享账户中使用；不需要高亮时可退出托盘工具并正常重启 Codex。详见 [SECURITY.md](SECURITY.md)。
+## License
 
-## 开源许可
-
-本项目采用 [MIT License](LICENSE)。这是非官方社区工具；Codex、ChatGPT 和 OpenAI 是其各自权利人的商标。
-
-## 第三方参考
-
-Windows Codex 发现、仅回环 CDP 启动和运行时恢复设计参考了 MIT 许可的 [CodeFace](https://github.com/sundy-li/CodeFace)。文字锚定策略参考了 BSD-2-Clause 许可的 [Hypothesis client](https://github.com/hypothesis/client)。详见 `licenses/THIRD_PARTY_NOTICES.md`。
+[MIT](LICENSE). See [third-party notices](licenses/THIRD_PARTY_NOTICES.md) for the CodeFace and Hypothesis projects that informed the implementation.
