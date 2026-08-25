@@ -534,7 +534,7 @@
   }
 
   function updateToolbarMode(range) {
-    if (!toolbarBar || !deleteButton) return 186;
+    if (!toolbarBar || !deleteButton) return 150;
     const matching = new Set(matchingAnchorIds(range));
     const colors = new Set(
       data.highlights
@@ -545,7 +545,7 @@
     for (const [name, button] of colorButtons) {
       button.dataset.active = colors.size === 1 && colors.has(name) ? "true" : "false";
     }
-    const width = matching.size > 0 ? 220 : 186;
+    const width = matching.size > 0 ? 178 : 150;
     toolbarHost.style.width = `${width}px`;
     return width;
   }
@@ -621,7 +621,7 @@
     if (!rect || (!rect.width && !rect.height)) return hideToolbar();
     toolbarHost.style.display = "block";
     const width = updateToolbarMode(pendingRange);
-    const height = 42;
+    const height = 34;
     placeFloatingHost(toolbarHost, rect, width, height, true);
     setTimeout(() => {
       if (toolbarHost?.style.display === "block") {
@@ -679,30 +679,30 @@
     toolbarHost = document.createElement("div");
     toolbarHost.id = TOOLBAR_HOST_ID;
     toolbarHost.style.cssText =
-      "display:none;position:fixed;z-index:2147483646;width:186px;height:42px;" +
+      "display:none;position:fixed;z-index:2147483646;width:150px;height:34px;" +
       "pointer-events:auto;isolation:isolate;";
     const shadow = toolbarHost.attachShadow({ mode: "open" });
     const style = document.createElement("style");
     style.textContent = `
       .bar {
-        height: 42px;
+        height: 34px;
         box-sizing: border-box;
         display: flex;
         align-items: center;
-        gap: 4px;
+        gap: 3px;
         border: 1px solid rgba(0,0,0,.13);
         border-radius: 14px;
         background: rgba(255,255,255,.97);
         box-shadow: 0 8px 26px rgba(0,0,0,.18);
-        padding: 5px 7px;
+        padding: 4px 6px;
       }
       button {
-        width: 30px;
-        height: 30px;
+        width: 24px;
+        height: 24px;
         display: grid;
         place-items: center;
         border: 1px solid transparent;
-        border-radius: 10px;
+        border-radius: 8px;
         background: transparent;
         color: #242424;
         cursor: pointer;
@@ -715,15 +715,15 @@
         background: rgba(0,0,0,.06);
       }
       .swatch {
-        width: 21px;
-        height: 21px;
+        width: 17px;
+        height: 17px;
         border-radius: 50%;
         border: 1px solid rgba(0,0,0,.2);
         box-sizing: border-box;
       }
-      .divider { width: 1px; height: 22px; background: rgba(0,0,0,.12); }
+      .divider { width: 1px; height: 18px; background: rgba(0,0,0,.12); }
       .delete { color: #d93025; }
-      svg { width: 18px; height: 18px; }
+      svg { width: 16px; height: 16px; }
     `;
     toolbarBar = document.createElement("div");
     toolbarBar.className = "bar";
@@ -806,7 +806,7 @@
     hoverHideTimer = 0;
     hoverAnchorId = id;
     hoverHost.style.display = "block";
-    placeFloatingHost(hoverHost, rect, 38, 38, false);
+    placeFloatingHost(hoverHost, rect, 32, 32, false);
   }
 
   function removeHoveredHighlight() {
@@ -824,18 +824,18 @@
     hoverHost = document.createElement("div");
     hoverHost.id = HOVER_HOST_ID;
     hoverHost.style.cssText =
-      "display:none;position:fixed;z-index:2147483645;width:38px;height:38px;" +
+      "display:none;position:fixed;z-index:2147483645;width:32px;height:32px;" +
       "pointer-events:auto;isolation:isolate;";
     const shadow = hoverHost.attachShadow({ mode: "open" });
     const style = document.createElement("style");
     style.textContent = `
       button {
-        width: 38px;
-        height: 38px;
+        width: 32px;
+        height: 32px;
         display: grid;
         place-items: center;
         border: 1px solid rgba(0,0,0,.13);
-        border-radius: 12px;
+        border-radius: 10px;
         background: rgba(255,255,255,.98);
         color: #d93025;
         box-shadow: 0 7px 22px rgba(0,0,0,.18);
@@ -843,7 +843,7 @@
         padding: 0;
       }
       button:hover { background: #fff1f0; transform: translateY(-1px); }
-      svg { width: 18px; height: 18px; }
+      svg { width: 16px; height: 16px; }
     `;
     hoverDeleteButton = document.createElement("button");
     hoverDeleteButton.type = "button";

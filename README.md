@@ -30,6 +30,7 @@ It does not add translation, summarization, AI prompts, or a system-wide screen 
 | Hover delete | Move the pointer over a highlight and remove it without selecting it again. |
 | Native-menu avoidance | Places the palette away from Codex's own selection actions. |
 | Local-first | Stores highlight records on your device; no project server is involved. |
+| Data manager | Search, delete, clear, import, and export highlights from the tray menu. |
 
 ## See it in action
 
@@ -49,6 +50,14 @@ It does not add translation, summarization, AI prompts, or a system-wide screen 
 
 Requirements: Windows 10 or 11 and the Codex desktop app.
 
+### Install a release
+
+1. Download `codex-highlighter-v1.1.0-windows-x64.zip` from [GitHub Releases](https://github.com/andyxueanan-dot/codex-highlighter/releases/latest).
+2. Extract the archive.
+3. Run `install.ps1` in PowerShell. The installer uses the current user account and does not require administrator access.
+
+### Build from source
+
 ```powershell
 git clone https://github.com/andyxueanan-dot/codex-highlighter.git
 cd codex-highlighter
@@ -64,6 +73,8 @@ cd codex-highlighter
 Selecting an existing highlight also lets you recolor or delete it. The palette prefers a position below the selection and avoids Codex's native selection action menu.
 
 `Ctrl+Shift+H` also toggles the current selection.
+
+Open the yellow tray icon and choose **Manage highlight data** to search records, delete selected rows, clear all data, or import/export JSON backups.
 
 ## How it works
 
@@ -104,6 +115,8 @@ The browser test needs Node.js, Playwright, and Chrome or Edge. The native integ
 ## Security
 
 While the helper is running, another process under the same Windows account may be able to access the local debugging endpoint. Do not use it on an untrusted shared account. See [SECURITY.md](SECURITY.md).
+
+See the [compatibility matrix](docs/COMPATIBILITY.md) for verified Codex, Chromium, and Windows versions.
 
 ## Uninstall
 

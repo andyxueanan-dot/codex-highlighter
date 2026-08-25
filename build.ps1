@@ -5,7 +5,10 @@ $projectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $compiler = 'C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe'
 $outputDirectory = Join-Path $projectRoot 'dist'
 $outputFile = Join-Path $outputDirectory 'CodexHighlighter.exe'
-$sourceFile = Join-Path $projectRoot 'src\CodexHighlighter.cs'
+$sourceFiles = @(
+    (Join-Path $projectRoot 'src\CodexHighlighter.cs')
+    (Join-Path $projectRoot 'src\HighlightManagerForm.cs')
+)
 $scriptFile = Join-Path $projectRoot 'src\highlighter.js'
 
 if (-not (Test-Path -LiteralPath $compiler)) {
@@ -27,7 +30,7 @@ $compilerArguments = @(
     '/reference:System.Web.Extensions.dll'
     '/reference:System.Windows.Forms.dll'
     "/resource:$scriptFile,CodexHighlighter.highlighter.js"
-    $sourceFile
+    $sourceFiles
 )
 
 & $compiler @compilerArguments

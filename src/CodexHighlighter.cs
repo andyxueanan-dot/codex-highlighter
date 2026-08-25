@@ -30,7 +30,9 @@ namespace CodexHighlighter
         {
             if (HasArgument(args, "--self-test"))
             {
-                return SelfTest.Run(GetArgumentValue(args, "--self-test-output"));
+                return SelfTest.Run(
+                    GetArgumentValue(args, "--self-test-output"),
+                    HasArgument(args, "--skip-codex-check"));
             }
 
             bool created;
@@ -122,6 +124,13 @@ namespace CodexHighlighter
                 if (exception != null) line += "\r\n" + exception;
                 lock (Gate)
                 {
+                    if (File.Exists(AppPaths.LogFile) &&
+                        new FileInfo(AppPaths.LogFile).Length > 2 * 1024 * 1024)
+                    {
+                        string previous = AppPaths.LogFile + ".1";
+                        if (File.Exists(previous)) File.Delete(previous);
+                        File.Move(AppPaths.LogFile, previous);
+                    }
                     File.AppendAllText(AppPaths.LogFile, line + "\r\n", Encoding.UTF8);
                 }
             }
@@ -140,6 +149,7 @@ namespace CodexHighlighter
         private readonly System.Windows.Forms.Timer startupTimer;
         private readonly System.Windows.Forms.Timer uiTimer;
         private readonly HighlighterHost host;
+        private HighlightManagerForm managerForm;
         private bool connecting;
 
         internal HighlighterApplicationContext()
@@ -152,12 +162,14 @@ namespace CodexHighlighter
             statusItem.Enabled = false;
             reconnectItem = new ToolStripMenuItem("连接或重启 Codex", null, OnReconnect);
             reinjectItem = new ToolStripMenuItem("重新加载高亮功能", null, OnReinject);
+            ToolStripMenuItem manageData = new ToolStripMenuItem("管理高亮数据", null, OnManageData);
             ToolStripMenuItem openFolder = new ToolStripMenuItem("打开高亮数据目录", null, OnOpenFolder);
             ToolStripMenuItem exit = new ToolStripMenuItem("退出高亮器", null, OnExit);
             menu.Items.Add(statusItem);
             menu.Items.Add(new ToolStripSeparator());
             menu.Items.Add(reconnectItem);
             menu.Items.Add(reinjectItem);
+            menu.Items.Add(manageData);
             menu.Items.Add(openFolder);
             menu.Items.Add(new ToolStripSeparator());
             menu.Items.Add(exit);
@@ -274,6 +286,22 @@ namespace CodexHighlighter
             });
         }
 
+        private void OnManageData(object sender, EventArgs eventArgs)
+        {
+            if (managerForm == null || managerForm.IsDisposed)
+            {
+                managerForm = new HighlightManagerForm(host);
+            }
+            managerForm.Show();
+            if (managerForm.WindowState == FormWindowState.Minimized)
+            {
+                managerForm.WindowState = FormWindowState.Normal;
+            }
+            managerForm.BringToFront();
+            managerForm.Activate();
+            managerForm.RefreshData();
+        }
+
         private void OnShowStatus(object sender, EventArgs eventArgs)
         {
             MessageBox.Show(
@@ -301,6 +329,7 @@ namespace CodexHighlighter
         {
             startupTimer.Stop();
             uiTimer.Stop();
+            if (managerForm != null && !managerForm.IsDisposed) managerForm.Close();
             host.Dispose();
             trayIcon.Visible = false;
             trayIcon.Dispose();
@@ -603,6 +632,18 @@ namespace CodexHighlighter
                 }
                 cdp.Evaluate(target, injectorScript);
             }
+            MonitorNow();
+        }
+
+        internal string ReadHighlightData()
+        {
+            return store.Load();
+        }
+
+        internal void ReplaceHighlightData(string value)
+        {
+            ThrowIfDisposed();
+            store.SaveReplacement(value);
             MonitorNow();
         }
 
@@ -1346,6 +1387,23 @@ namespace CodexHighlighter
             }
         }
 
+        internal void SaveReplacement(string value)
+        {
+            DataStamp incoming = Stamp(value);
+            if (!incoming.Valid)
+            {
+                throw new InvalidDataException("高亮数据格式无效、数量过多或文件超过 5 MiB。");
+            }
+            lock (gate)
+            {
+                AppPaths.Ensure();
+                string temporary = AppPaths.DataFile + ".tmp";
+                File.WriteAllText(temporary, value, new UTF8Encoding(false));
+                File.Copy(temporary, AppPaths.DataFile, true);
+                File.Delete(temporary);
+            }
+        }
+
         internal int Count(string value)
         {
             return Stamp(value).Count;
@@ -1416,7 +1474,7 @@ namespace CodexHighlighter
 
     internal static class SelfTest
     {
-        internal static int Run(string outputPath)
+        internal static int Run(string outputPath, bool skipCodexCheck)
         {
             List<string> lines = new List<string>();
             try
@@ -1434,12 +1492,36 @@ namespace CodexHighlighter
                     "高亮数据校验失败");
                 lines.Add("PASS data-validation");
 
-                string executable = CodexInstallLocator.Find();
-                Require(File.Exists(executable), "没有找到 Codex 可执行文件");
-                lines.Add("PASS codex-locator " + executable);
-                Require(CodexProcessManager.IsRunning(executable),
-                    "没有识别到当前 Codex 主窗口进程");
-                lines.Add("PASS codex-root-process");
+                object[] imported = HighlightManagerForm.GetHighlights(sample, true);
+                Require(imported.Length == 1, "数据管理器无法读取合法记录");
+                string cleared = HighlightManagerForm.BuildUpdatedDocument(sample, new object[0]);
+                DataStamp clearedStamp = HighlightDataStore.Stamp(cleared);
+                Require(clearedStamp.Valid && clearedStamp.Count == 0 && clearedStamp.Revision == 3,
+                    "数据管理器无法生成新版文档");
+                lines.Add("PASS data-manager-json-operations");
+
+                using (HighlighterHost managerHost = new HighlighterHost())
+                using (HighlightManagerForm managerForm = new HighlightManagerForm(managerHost))
+                {
+                    managerForm.CreateControl();
+                    managerForm.RefreshData();
+                    Require(managerForm.Controls.Count >= 3, "数据管理窗口未正确构造");
+                }
+                lines.Add("PASS data-manager-window");
+
+                if (skipCodexCheck)
+                {
+                    lines.Add("SKIP codex-integration-check");
+                }
+                else
+                {
+                    string executable = CodexInstallLocator.Find();
+                    Require(File.Exists(executable), "没有找到 Codex 可执行文件");
+                    lines.Add("PASS codex-locator " + executable);
+                    Require(CodexProcessManager.IsRunning(executable),
+                        "没有识别到当前 Codex 主窗口进程");
+                    lines.Add("PASS codex-root-process");
+                }
 
                 int port = TestFreePort();
                 Require(port > 0, "无法分配本机端口");

@@ -20,6 +20,8 @@ Codex Highlighter 为 Windows 版 Codex 桌面应用增加一个功能：在聊�
 
 它不包含翻译、解释、总结、AI 提示词或全局屏幕标记。
 
+托盘菜单提供原生数据管理窗口，可以搜索、删除、清空、导入和导出高亮记录。
+
 ## 功能演示
 
 <p align="center">
@@ -38,6 +40,14 @@ Codex Highlighter 为 Windows 版 Codex 桌面应用增加一个功能：在聊�
 
 需要 Windows 10/11 和 Codex 桌面应用。
 
+### 安装发布版
+
+1. 从 [GitHub Releases](https://github.com/andyxueanan-dot/codex-highlighter/releases/latest) 下载 `codex-highlighter-v1.1.0-windows-x64.zip`。
+2. 解压后在 PowerShell 中运行 `install.ps1`。
+3. 安装器使用当前用户目录，不需要管理员权限。
+
+### 从源码构建
+
 ```powershell
 git clone https://github.com/andyxueanan-dot/codex-highlighter.git
 cd codex-highlighter
@@ -53,6 +63,8 @@ cd codex-highlighter
 重新框选已有高亮时，也可以直接改色或点击垃圾桶删除。
 
 也可以在选中文字后按 `Ctrl+Shift+H` 添加或取消高亮。
+
+右键黄色托盘图标并选择“管理高亮数据”，可以搜索记录、删除选中、清空全部以及导入/导出 JSON 备份。
 
 颜色工具条会优先显示在选区下方，并避开 Codex 自带的“添加到对话”“更多”和“在侧边聊天中提问”菜单。程序运行后位于 Windows 系统托盘。退出托盘程序会立即撤掉当前页面上的高亮，但保留数据；下次启动后会恢复。
 
@@ -116,6 +128,8 @@ dist\CodexHighlighter.exe
 ## 安全提示
 
 工具运行期间，Codex 会开放一个仅绑定 `127.0.0.1` 的调试端口。同一 Windows 账户下的其他本地进程理论上也可能访问它。不要在不可信的共享账户中使用；不需要高亮时可退出托盘工具并正常重启 Codex。详见 [SECURITY.md](SECURITY.md)。
+
+已验证的 Windows、Codex 与 Chromium 版本见[兼容性矩阵](docs/COMPATIBILITY.md)。
 
 ## 开源许可
 

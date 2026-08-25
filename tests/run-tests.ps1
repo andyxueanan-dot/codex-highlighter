@@ -1,3 +1,7 @@
+param(
+    [switch]$SkipCodexCheck
+)
+
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
@@ -33,14 +37,18 @@ if ($LASTEXITCODE -ne 0) { throw 'JavaScript syntax check failed' }
 
 & (Join-Path $projectRoot 'build.ps1')
 
+$selfTestArguments = @('--self-test', '--self-test-output', $selfTestOutput)
+if ($SkipCodexCheck) { $selfTestArguments += '--skip-codex-check' }
 $selfTestProcess = Start-Process -FilePath $executable `
-    -ArgumentList @('--self-test', '--self-test-output', $selfTestOutput) `
+    -ArgumentList $selfTestArguments `
     -WindowStyle Hidden -Wait -PassThru
 if ($selfTestProcess.ExitCode -ne 0) {
     Get-Content -LiteralPath $selfTestOutput
     throw 'Native self-test failed'
 }
 Get-Content -LiteralPath $selfTestOutput
+
+& (Join-Path $projectRoot 'tests\test-installer.ps1')
 
 $previousNodePath = $env:NODE_PATH
 try {

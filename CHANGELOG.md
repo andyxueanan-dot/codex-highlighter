@@ -7,6 +7,11 @@
 - Move the palette away from Codex's native selection action menu.
 - Show a direct delete button when hovering highlighted text.
 - Allow selecting an existing highlight to recolor or delete it.
+- Add a native tray data manager with search, delete, clear, import, and export.
+- Add current-user install and uninstall scripts with data-preserving defaults.
+- Add reproducible release packaging and SHA-256 checksum generation.
+- Add a verified compatibility matrix and bounded 2 MiB log rotation.
+- Reduce the palette and hover controls for high-DPI displays.
 - Expand browser regression coverage for multiple transcript surfaces and menu collision.
 
 ## 1.0.1 - 2026-08-25
