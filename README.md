@@ -1,0 +1,90 @@
+# Codex Highlighter
+
+[English](README.en.md) | 简体中文
+
+> 非官方社区项目，与 OpenAI 无隶属或背书关系。Codex 更新可能改变内部页面结构并暂时影响兼容性。
+
+Codex Highlighter 为 Windows 版 Codex 桌面应用增加一个功能：在聊天正文中选中文字，点击黄色荧光笔，保留高亮。
+
+它不包含翻译、解释、总结、AI 提示词或全局屏幕标记。
+
+## 使用
+
+1. 双击 `Start-Codex-Highlighter.cmd`。
+2. 第一次启用时，程序会询问是否重启 Codex。选择“是”。
+3. 在 Codex 聊天正文里选中文字。
+4. 点击选区上方的黄色荧光笔按钮。
+5. 再次选择已经高亮的文字并点击按钮，可以取消高亮。
+
+也可以在选中文字后按 `Ctrl+Shift+H` 添加或取消高亮。
+
+程序运行后位于 Windows 系统托盘。退出托盘程序会立即撤掉当前页面上的高亮，但保留数据；下次启动后会恢复。
+
+## 为什么第一次需要重启 Codex
+
+Codex 没有向普通插件开放聊天正文的选区和样式接口。本工具让 Codex 以仅绑定 `127.0.0.1` 的 Chrome DevTools Protocol 端口启动，再把高亮脚本注入真实的 Chromium 文本页面。
+
+它不会修改：
+
+- Codex 官方安装目录或 `app.asar`
+- Codex 代码签名
+- 登录状态、API 配置或任务数据
+- 注册表、计划任务或开机启动项
+
+## 持久化与稳定性
+
+高亮数据保存在：
+
+```text
+%LOCALAPPDATA%\CodexHighlighter\highlights.json
+```
+
+每条高亮保存任务地址、消息指纹、原文、前后文和文字位置。页面滚动、React 重新渲染或重新打开任务时，脚本会重新定位文字。显示使用 Chromium CSS Highlights API，不修改 React 管理的聊天 DOM。
+
+当前已验证 Codex `26.818.5229.0`、Chromium 151。Codex 更新如果改变内部页面结构，托盘会显示连接异常；重新加载失败时可退出工具，Codex 本身仍可正常使用。日志位于：
+
+```text
+%LOCALAPPDATA%\CodexHighlighter\CodexHighlighter.log
+```
+
+## 构建和测试
+
+项目使用 Windows 自带的 .NET Framework C# 编译器，不需要安装 .NET SDK：
+
+```powershell
+.\build.ps1
+```
+
+输出文件：
+
+```text
+dist\CodexHighlighter.exe
+```
+
+完整自动测试：
+
+```powershell
+.\tests\run-tests.ps1
+```
+
+测试覆盖 JavaScript 语法、嵌入资源、数据格式、Codex 安装定位、本机端口，以及真实 Chromium 中的添加、DOM 重建后重新锚定、相邻选区和删除。
+
+## 删除
+
+1. 从系统托盘退出 Codex Highlighter。
+2. 删除本项目目录。
+3. 如果也要删除所有高亮记录，再删除 `%LOCALAPPDATA%\CodexHighlighter`。
+
+没有其他安装项需要清理。
+
+## 安全提示
+
+工具运行期间，Codex 会开放一个仅绑定 `127.0.0.1` 的调试端口。同一 Windows 账户下的其他本地进程理论上也可能访问它。不要在不可信的共享账户中使用；不需要高亮时可退出托盘工具并正常重启 Codex。详见 [SECURITY.md](SECURITY.md)。
+
+## 开源许可
+
+本项目采用 [MIT License](LICENSE)。这是非官方社区工具；Codex、ChatGPT 和 OpenAI 是其各自权利人的商标。
+
+## 第三方参考
+
+Windows Codex 发现、仅回环 CDP 启动和运行时恢复设计参考了 MIT 许可的 [CodeFace](https://github.com/sundy-li/CodeFace)。文字锚定策略参考了 BSD-2-Clause 许可的 [Hypothesis client](https://github.com/hypothesis/client)。详见 `licenses/THIRD_PARTY_NOTICES.md`。

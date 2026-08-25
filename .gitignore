@@ -1,0 +1,22 @@
+# Build outputs
+dist/
+bin/
+obj/
+*.pdb
+
+# Local runtime state
+*.log
+*.tmp
+highlights.json
+cdp-port.txt
+
+# Editors and tools
+.vs/
+.vscode/
+.idea/
+node_modules/
+
+# Secrets and local environment files
+.env
+.env.*
+!.env.example
