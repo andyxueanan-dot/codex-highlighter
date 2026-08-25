@@ -11,21 +11,26 @@ if (!scriptPath || !chromePath) {
 
 const script = fs.readFileSync(scriptPath, "utf8");
 
-async function selectText(page, start, end) {
+async function selectText(page, selector, start, end) {
   await page.evaluate(
-    ({ start, end }) => {
-      const text = document.querySelector("#answer").firstChild;
+    ({ selector, start, end }) => {
+      const element = document.querySelector(selector);
+      const text = element.firstChild;
       const range = document.createRange();
       range.setStart(text, start);
       range.setEnd(text, end);
       const selection = getSelection();
       selection.removeAllRanges();
       selection.addRange(range);
-      document
-        .querySelector("#answer")
-        .dispatchEvent(new PointerEvent("pointerup", { bubbles: true }));
+
+      const selectionRect = range.getBoundingClientRect();
+      const nativeMenu = document.querySelector("#native-selection-menu");
+      nativeMenu.style.display = "block";
+      nativeMenu.style.left = `${Math.max(0, selectionRect.left)}px`;
+      nativeMenu.style.top = `${Math.max(0, selectionRect.top - 38)}px`;
+      element.dispatchEvent(new PointerEvent("pointerup", { bubbles: true }));
     },
-    { start, end },
+    { selector, start, end },
   );
   await page.waitForFunction(
     () =>
@@ -34,13 +39,31 @@ async function selectText(page, start, end) {
   );
 }
 
-async function clickMarker(page) {
+async function clickColor(page, color) {
+  await page.evaluate((color) => {
+    document
+      .querySelector("#codex-highlighter-toolbar-host")
+      .shadowRoot.querySelector(`button[data-color="${color}"]`)
+      .click();
+  }, color);
+}
+
+async function clickSelectionDelete(page) {
   await page.evaluate(() => {
     document
       .querySelector("#codex-highlighter-toolbar-host")
-      .shadowRoot.querySelector("button")
+      .shadowRoot.querySelector("button.delete")
       .click();
   });
+}
+
+function intersects(left, right) {
+  return !(
+    left.right <= right.left ||
+    left.left >= right.right ||
+    left.bottom <= right.top ||
+    left.top >= right.bottom
+  );
 }
 
 (async () => {
@@ -48,7 +71,7 @@ async function clickMarker(page) {
     headless: true,
     executablePath: chromePath,
   });
-  const page = await browser.newPage();
+  const page = await browser.newPage({ viewport: { width: 1100, height: 800 } });
   try {
     await page.setContent(`
       <!doctype html>
@@ -61,6 +84,15 @@ async function clickMarker(page) {
             <p id="answer">Alpha beta gamma delta. Stable anchoring test.</p>
           </article>
         </main>
+        <aside id="side-chat">
+          <article data-message-id="side-message-1">
+            <p id="side-answer">Side panel selectable text.</p>
+          </article>
+        </aside>
+        <div id="native-selection-menu"
+          style="display:none;position:fixed;z-index:1000;background:white">
+          <button type="button">添加到对话</button><button type="button">更多</button>
+        </div>
       </body></html>
     `);
     await page.addScriptTag({ content: script });
@@ -70,8 +102,33 @@ async function clickMarker(page) {
     );
     if (!supported) throw new Error("CSS Highlights API is unavailable");
 
-    await selectText(page, 6, 16);
-    await clickMarker(page);
+    await selectText(page, "#answer", 6, 16);
+    const placement = await page.evaluate(() => {
+      const toolbar = document
+        .querySelector("#codex-highlighter-toolbar-host")
+        .getBoundingClientRect();
+      const nativeMenu = document
+        .querySelector("#native-selection-menu")
+        .getBoundingClientRect();
+      return {
+        toolbar: {
+          left: toolbar.left,
+          right: toolbar.right,
+          top: toolbar.top,
+          bottom: toolbar.bottom,
+        },
+        nativeMenu: {
+          left: nativeMenu.left,
+          right: nativeMenu.right,
+          top: nativeMenu.top,
+          bottom: nativeMenu.bottom,
+        },
+      };
+    });
+    if (intersects(placement.toolbar, placement.nativeMenu)) {
+      throw new Error("Highlight palette overlaps the native Codex selection menu");
+    }
+    await clickColor(page, "yellow");
     await page.waitForFunction(
       () => window.__CODEX_HIGHLIGHTER__.health().resolved === 1,
     );
@@ -79,24 +136,30 @@ async function clickMarker(page) {
     const added = await page.evaluate(() => ({
       health: window.__CODEX_HIGHLIGHTER__.health(),
       data: JSON.parse(window.__CODEX_HIGHLIGHTER__.exportData()),
+      yellowRanges: CSS.highlights.get("codex-study-highlight-yellow")?.size || 0,
     }));
-    if (added.health.count !== 1 || added.data.highlights[0].exact !== "beta gamma") {
-      throw new Error("Selection was not persisted correctly");
+    if (
+      added.health.count !== 1 ||
+      added.data.highlights[0].exact !== "beta gamma" ||
+      added.data.highlights[0].color !== "yellow" ||
+      added.yellowRanges !== 1
+    ) {
+      throw new Error(`Yellow selection was not persisted correctly: ${JSON.stringify(added)}`);
     }
 
-    await selectText(page, 16, 22);
-    const adjacentMode = await page.evaluate(() =>
+    await selectText(page, "#answer", 16, 22);
+    const adjacentDeleteVisible = await page.evaluate(() =>
       document
         .querySelector("#codex-highlighter-toolbar-host")
-        .shadowRoot.querySelector("button").dataset.mode,
+        .shadowRoot.querySelector("button.delete").style.display,
     );
-    if (adjacentMode !== "add") {
+    if (adjacentDeleteVisible !== "none") {
       throw new Error("An adjacent selection was incorrectly treated as overlapping");
     }
     await page.keyboard.press("Escape");
 
     await page.evaluate(() => {
-      document.querySelector("article").outerHTML = `
+      document.querySelector("main article").outerHTML = `
         <article data-message-id="message-1">
           <p id="answer">Alpha beta gamma delta. Stable anchoring test.</p>
         </article>`;
@@ -105,19 +168,58 @@ async function clickMarker(page) {
       () => window.__CODEX_HIGHLIGHTER__.health().resolved === 1,
     );
 
-    await selectText(page, 6, 16);
-    const removalMode = await page.evaluate(() => ({
-      mode: document
+    await selectText(page, "#answer", 6, 16);
+    const deleteVisible = await page.evaluate(() =>
+      document
         .querySelector("#codex-highlighter-toolbar-host")
-        .shadowRoot.querySelector("button").dataset.mode,
-      selected: getSelection().toString(),
-      health: window.__CODEX_HIGHLIGHTER__.health(),
-      data: JSON.parse(window.__CODEX_HIGHLIGHTER__.exportData()),
-    }));
-    if (removalMode.mode !== "remove") {
-      throw new Error(`Existing highlight was not detected: ${JSON.stringify(removalMode)}`);
+        .shadowRoot.querySelector("button.delete").style.display,
+    );
+    if (deleteVisible !== "grid") {
+      throw new Error("Existing highlight did not expose the selection delete button");
     }
-    await clickMarker(page);
+    await clickSelectionDelete(page);
+    await page.waitForFunction(
+      () => window.__CODEX_HIGHLIGHTER__.health().count === 0,
+    );
+
+    await selectText(page, "#side-answer", 0, 10);
+    await clickColor(page, "purple");
+    await page.waitForFunction(
+      () =>
+        window.__CODEX_HIGHLIGHTER__.health().resolved === 1 &&
+        JSON.parse(window.__CODEX_HIGHLIGHTER__.exportData()).highlights[0]
+          ?.color === "purple",
+    );
+
+    await selectText(page, "#side-answer", 0, 10);
+    await clickColor(page, "cyan");
+    await page.waitForFunction(
+      () =>
+        JSON.parse(window.__CODEX_HIGHLIGHTER__.exportData()).highlights[0]
+          ?.color === "cyan" &&
+        CSS.highlights.get("codex-study-highlight-cyan")?.size === 1,
+    );
+
+    const hoverPoint = await page.evaluate(() => {
+      const text = document.querySelector("#side-answer").firstChild;
+      const range = document.createRange();
+      range.setStart(text, 0);
+      range.setEnd(text, 10);
+      const rect = range.getBoundingClientRect();
+      return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+    });
+    await page.mouse.move(hoverPoint.x, hoverPoint.y);
+    await page.waitForFunction(
+      () =>
+        document.querySelector("#codex-highlighter-hover-host")?.style.display ===
+        "block",
+    );
+    await page.evaluate(() => {
+      document
+        .querySelector("#codex-highlighter-hover-host")
+        .shadowRoot.querySelector("button")
+        .click();
+    });
     await page.waitForFunction(
       () => window.__CODEX_HIGHLIGHTER__.health().count === 0,
     );
@@ -126,10 +228,12 @@ async function clickMarker(page) {
       () => window.__CODEX_HIGHLIGHTER__.health(),
     );
     if (finalHealth.count !== 0 || finalHealth.resolved !== 0) {
-      throw new Error("Highlight toggle did not remove the anchor");
+      throw new Error("Hover delete did not remove the anchor");
     }
 
-    process.stdout.write("PASS browser-add-reanchor-remove\n");
+    process.stdout.write(
+      "PASS browser-multi-surface-palette-avoidance-reanchor-hover-delete\n",
+    );
   } finally {
     await browser.close();
   }

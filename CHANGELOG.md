@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.1.0 - 2026-08-25
+
+- Support text selection in Codex side-chat and secondary transcript panels.
+- Add yellow, green, cyan, pink, and purple highlight colors.
+- Move the palette away from Codex's native selection action menu.
+- Show a direct delete button when hovering highlighted text.
+- Allow selecting an existing highlight to recolor or delete it.
+- Expand browser regression coverage for multiple transcript surfaces and menu collision.
+
 ## 1.0.1 - 2026-08-25
 
 - Add persistent yellow highlighting for Codex transcript text.

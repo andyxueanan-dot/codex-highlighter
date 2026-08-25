@@ -46,7 +46,12 @@ async function evaluate(target, expression) {
       const needle = ${encodedNeedle};
       const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
       let node = walker.nextNode();
-      while (node && (!node.data.includes(needle) || !node.parentElement?.closest('main'))) {
+      const root = document.querySelector('#root') || document.body;
+      while (node && (
+        !node.data.includes(needle) ||
+        !root.contains(node.parentElement) ||
+        node.parentElement?.closest('nav')
+      )) {
         node = walker.nextNode();
       }
       if (!node) { resolve({ found: false }); return; }
@@ -61,12 +66,17 @@ async function evaluate(target, expression) {
       setTimeout(() => {
         const host = document.querySelector('#codex-highlighter-toolbar-host');
         const button = host?.shadowRoot?.querySelector('button');
+        const paletteColors = [...(host?.shadowRoot?.querySelectorAll('button[data-color]') || [])]
+          .map(item => item.dataset.color);
+        const deleteButton = host?.shadowRoot?.querySelector('button.delete');
         resolve({
           found: true,
           selected: selection.toString(),
-          insideMain: Boolean(node.parentElement.closest('main')),
+          surfaceTag: node.parentElement.closest('main,aside')?.tagName || 'ROOT',
           toolbarDisplay: host?.style.display || null,
           buttonTitle: button?.title || null,
+          paletteColors,
+          deleteDisplay: deleteButton?.style.display || null,
           health: window.__CODEX_HIGHLIGHTER__?.health?.() || null
         });
       }, 250);

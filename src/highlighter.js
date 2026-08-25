@@ -1,12 +1,20 @@
 (() => {
   "use strict";
 
-  const VERSION = "1.0.1";
+  const VERSION = "1.1.0";
   const STATE_KEY = "__CODEX_HIGHLIGHTER__";
   const STORAGE_KEY = "codex-highlighter:data:v1";
   const STYLE_ID = "codex-highlighter-style";
   const TOOLBAR_HOST_ID = "codex-highlighter-toolbar-host";
-  const HIGHLIGHT_NAME = "codex-study-highlight";
+  const HOVER_HOST_ID = "codex-highlighter-hover-host";
+  const HIGHLIGHT_PREFIX = "codex-study-highlight";
+  const COLORS = {
+    yellow: { label: "黄色", value: "rgba(255, 235, 59, 0.78)" },
+    green: { label: "绿色", value: "rgba(139, 232, 90, 0.72)" },
+    cyan: { label: "青色", value: "rgba(92, 225, 230, 0.72)" },
+    pink: { label: "粉色", value: "rgba(239, 108, 214, 0.68)" },
+    purple: { label: "紫色", value: "rgba(155, 93, 229, 0.64)" },
+  };
   const MAX_HIGHLIGHTS = 2000;
   const MAX_SELECTION_LENGTH = 5000;
 
@@ -31,7 +39,14 @@
     highlights: [],
   };
   let toolbarHost = null;
-  let toolbarButton = null;
+  let toolbarBar = null;
+  let deleteButton = null;
+  const colorButtons = new Map();
+  let hoverHost = null;
+  let hoverDeleteButton = null;
+  let hoverAnchorId = null;
+  let hoverHideTimer = 0;
+  let hoverMoveFrame = 0;
   let pendingRange = null;
   let observer = null;
   let routeTimer = 0;
@@ -85,6 +100,7 @@
       scopeTag: safeString(value.scopeTag, 32),
       scopeLead: safeString(value.scopeLead, 128),
       scopeTail: safeString(value.scopeTail, 128),
+      color: Object.hasOwn(COLORS, value.color) ? value.color : "yellow",
       exact,
       prefix: safeString(value.prefix, 256),
       suffix: safeString(value.suffix, 256),
@@ -145,17 +161,32 @@
     return node.nodeType === Node.ELEMENT_NODE ? node : node.parentElement;
   }
 
+  function pageRoot() {
+    return document.querySelector("#root") || document.body || document.documentElement;
+  }
+
+  function selectionSurface(element) {
+    return (
+      element?.closest(
+        "main,aside,[data-side-chat],[data-testid*='side-chat']," +
+          "[data-testid*='sidecar'],[data-testid*='conversation']",
+      ) || pageRoot()
+    );
+  }
+
   function selectionAllowed(range) {
     if (!range || range.collapsed) return false;
     const start = elementForNode(range.startContainer);
     const end = elementForNode(range.endContainer);
     if (!start || !end) return false;
-    const main = start.closest("main") || document.querySelector("main");
-    if (!main || !main.contains(end)) return false;
+    const surface = selectionSurface(start);
+    if (!surface || surface !== selectionSurface(end) || !surface.contains(end)) {
+      return false;
+    }
     const blocked =
       "input,textarea,select,[contenteditable='true'],[contenteditable='']," +
-      "button,[role='button'],nav,aside,[role='dialog'],[role='menu']," +
-      `#${TOOLBAR_HOST_ID}`;
+      "button,[role='button'],nav,[role='dialog'],[role='menu']," +
+      `#${TOOLBAR_HOST_ID},#${HOVER_HOST_ID}`;
     if (start.closest(blocked) || end.closest(blocked)) return false;
     const exact = range.toString();
     return exact.trim().length > 0 && exact.length <= MAX_SELECTION_LENGTH;
@@ -172,8 +203,10 @@
     const start = elementForNode(range.startContainer);
     const end = elementForNode(range.endContainer);
     if (!start || !end) return null;
-    const main = start.closest("main") || document.querySelector("main");
-    if (!main || !main.contains(end)) return null;
+    const surface = selectionSurface(start);
+    if (!surface || surface !== selectionSurface(end) || !surface.contains(end)) {
+      return null;
+    }
 
     const semantic = semanticScope(start);
     if (semantic && semantic.contains(end)) return semantic;
@@ -196,7 +229,7 @@
       "H5",
       "H6",
     ]);
-    while (node && node !== main.parentElement) {
+    while (node && node !== surface.parentElement) {
       if (!node.contains(range.startContainer) || !node.contains(range.endContainer)) {
         node = node.parentElement;
         continue;
@@ -215,10 +248,10 @@
           }
         }
       }
-      if (node === main) break;
+      if (node === surface) break;
       node = node.parentElement;
     }
-    return fallback || main;
+    return fallback || surface;
   }
 
   function offsetWithin(scope, container, offset) {
@@ -232,7 +265,7 @@
     }
   }
 
-  function createAnchor(range) {
+  function createAnchor(range, color = "yellow") {
     const scope = chooseScope(range);
     if (!scope) return null;
     const scopeText = scope.textContent || "";
@@ -247,6 +280,7 @@
       scopeTag: scope.tagName || "",
       scopeLead: scopeText.slice(0, 96),
       scopeTail: scopeText.slice(-96),
+      color,
       exact,
       prefix: scopeText.slice(Math.max(0, start - 96), start),
       suffix: scopeText.slice(end, end + 96),
@@ -262,7 +296,11 @@
       acceptNode(node) {
         const parent = node.parentElement;
         if (!parent) return NodeFilter.FILTER_REJECT;
-        if (parent.closest(`#${TOOLBAR_HOST_ID},script,style,noscript`)) {
+        if (
+          parent.closest(
+            `#${TOOLBAR_HOST_ID},#${HOVER_HOST_ID},script,style,noscript`,
+          )
+        ) {
           return NodeFilter.FILTER_REJECT;
         }
         return NodeFilter.FILTER_ACCEPT;
@@ -297,8 +335,8 @@
   }
 
   function candidateScopes() {
-    const mains = Array.from(document.querySelectorAll("main"));
-    if (mains.length === 0) return [];
+    const root = pageRoot();
+    if (!root) return [];
     const result = [];
     const seen = new Set();
     const add = (node) => {
@@ -308,18 +346,17 @@
       seen.add(node);
       result.push(node);
     };
-    for (const main of mains) {
-      for (const node of main.querySelectorAll(
-        "[data-message-id],[data-turn-id],[data-testid*='conversation-turn']," +
-          "[data-testid*='message'],article,[role='article'],p,li,pre," +
-          "blockquote,h1,h2,h3,h4,h5,h6",
-      )) {
-        add(node);
-        if (result.length >= 1200) break;
-      }
-      add(main);
-      if (result.length >= 1200) break;
+    for (const node of root.querySelectorAll(
+      "[data-message-id],[data-turn-id],[data-testid*='conversation-turn']," +
+        "[data-testid*='message'],[data-side-chat],[data-testid*='side-chat']," +
+        "[data-testid*='sidecar'],article,[role='article'],p,li,pre," +
+        "blockquote,h1,h2,h3,h4,h5,h6",
+    )) {
+      add(node);
+      if (result.length >= 2000) break;
     }
+    for (const surface of root.querySelectorAll("main,aside")) add(surface);
+    add(root);
     return result;
   }
 
@@ -384,14 +421,18 @@
     if (document.getElementById(STYLE_ID)) return;
     const style = document.createElement("style");
     style.id = STYLE_ID;
-    style.textContent = `
-      ::highlight(${HIGHLIGHT_NAME}) {
-        background-color: rgba(255, 235, 59, 0.78);
-        color: inherit;
-        text-decoration: none;
-        text-shadow: none;
-      }
-    `;
+    style.textContent = Object.entries(COLORS)
+      .map(
+        ([name, color]) => `
+          ::highlight(${HIGHLIGHT_PREFIX}-${name}) {
+            background-color: ${color.value};
+            color: inherit;
+            text-decoration: none;
+            text-shadow: none;
+          }
+        `,
+      )
+      .join("\n");
     (document.head || document.documentElement).appendChild(style);
   }
 
@@ -399,16 +440,21 @@
     applyTimer = 0;
     if (disposed || !supportsHighlights) return;
     ensureStyle();
-    const group = new Highlight();
+    const groups = new Map(
+      Object.keys(COLORS).map((name) => [name, new Highlight()]),
+    );
     const scopes = candidateScopes();
     resolvedRanges.clear();
     for (const anchor of data.highlights) {
       const range = anchorToRange(anchor, scopes);
       if (!range) continue;
-      group.add(range);
+      groups.get(anchor.color || "yellow").add(range);
       resolvedRanges.set(anchor.id, range);
     }
-    CSS.highlights.set(HIGHLIGHT_NAME, group);
+    CSS.highlights.delete(HIGHLIGHT_PREFIX);
+    for (const [name, group] of groups) {
+      CSS.highlights.set(`${HIGHLIGHT_PREFIX}-${name}`, group);
+    }
   }
 
   function scheduleApply(delay = 180) {
@@ -422,10 +468,10 @@
       if (left.collapsed || right.collapsed) return false;
       const leftElement = elementForNode(left.startContainer);
       const rightElement = elementForNode(right.startContainer);
-      const root = leftElement?.closest("main");
+      const root = selectionSurface(leftElement);
       if (
         !root ||
-        root !== rightElement?.closest("main") ||
+        root !== selectionSurface(rightElement) ||
         !root.contains(left.startContainer) ||
         !root.contains(left.endContainer) ||
         !root.contains(right.startContainer) ||
@@ -488,13 +534,80 @@
   }
 
   function updateToolbarMode(range) {
-    if (!toolbarButton) return;
-    const removing = matchingAnchorIds(range).length > 0;
-    toolbarButton.title = removing
-      ? "取消高亮 (Ctrl+Shift+H)"
-      : "高亮 (Ctrl+Shift+H)";
-    toolbarButton.setAttribute("aria-label", toolbarButton.title);
-    toolbarButton.dataset.mode = removing ? "remove" : "add";
+    if (!toolbarBar || !deleteButton) return 186;
+    const matching = new Set(matchingAnchorIds(range));
+    const colors = new Set(
+      data.highlights
+        .filter((anchor) => matching.has(anchor.id))
+        .map((anchor) => anchor.color || "yellow"),
+    );
+    deleteButton.style.display = matching.size > 0 ? "grid" : "none";
+    for (const [name, button] of colorButtons) {
+      button.dataset.active = colors.size === 1 && colors.has(name) ? "true" : "false";
+    }
+    const width = matching.size > 0 ? 220 : 186;
+    toolbarHost.style.width = `${width}px`;
+    return width;
+  }
+
+  function rectsIntersect(left, right, padding = 3) {
+    return !(
+      left.right + padding <= right.left ||
+      left.left >= right.right + padding ||
+      left.bottom + padding <= right.top ||
+      left.top >= right.bottom + padding
+    );
+  }
+
+  function nearbyNativeMenuRects(selectionRect) {
+    const labels = /添加到对话|在侧边聊天中提问|更多|Add to conversation|Ask in side chat|More/i;
+    const rects = [];
+    for (const node of document.querySelectorAll("button,[role='button']")) {
+      if (!labels.test((node.textContent || "").trim())) continue;
+      const rect = node.getBoundingClientRect();
+      if (!rect.width || !rect.height) continue;
+      const nearX = rect.right >= selectionRect.left - 280 && rect.left <= selectionRect.right + 280;
+      const nearY = rect.bottom >= selectionRect.top - 160 && rect.top <= selectionRect.bottom + 160;
+      if (nearX && nearY) rects.push(rect);
+    }
+    return rects;
+  }
+
+  function placeFloatingHost(host, anchorRect, width, height, preferBelow = true) {
+    const gap = 10;
+    const margin = 8;
+    const centeredLeft = anchorRect.left + anchorRect.width / 2 - width / 2;
+    const candidates = preferBelow
+      ? [
+          { left: centeredLeft, top: anchorRect.bottom + gap },
+          { left: centeredLeft, top: anchorRect.top - height - gap },
+          { left: anchorRect.right + gap, top: anchorRect.top + anchorRect.height / 2 - height / 2 },
+          { left: anchorRect.left - width - gap, top: anchorRect.top + anchorRect.height / 2 - height / 2 },
+        ]
+      : [
+          { left: centeredLeft, top: anchorRect.top - height - gap },
+          { left: centeredLeft, top: anchorRect.bottom + gap },
+          { left: anchorRect.right + gap, top: anchorRect.top + anchorRect.height / 2 - height / 2 },
+        ];
+    const obstacles = nearbyNativeMenuRects(anchorRect);
+    let chosen = candidates[0];
+    for (const candidate of candidates) {
+      const bounded = {
+        left: Math.min(innerWidth - width - margin, Math.max(margin, candidate.left)),
+        top: Math.min(innerHeight - height - margin, Math.max(margin, candidate.top)),
+      };
+      const rect = {
+        ...bounded,
+        right: bounded.left + width,
+        bottom: bounded.top + height,
+      };
+      if (!obstacles.some((obstacle) => rectsIntersect(rect, obstacle))) {
+        chosen = bounded;
+        break;
+      }
+    }
+    host.style.left = `${Math.round(chosen.left)}px`;
+    host.style.top = `${Math.round(chosen.top)}px`;
   }
 
   function showToolbar(range) {
@@ -507,37 +620,57 @@
     const rect = rects.at(-1) || range.getBoundingClientRect();
     if (!rect || (!rect.width && !rect.height)) return hideToolbar();
     toolbarHost.style.display = "block";
-    const width = 42;
+    const width = updateToolbarMode(pendingRange);
     const height = 42;
-    const left = Math.min(
-      innerWidth - width - 8,
-      Math.max(8, rect.left + rect.width / 2 - width / 2),
-    );
-    const above = rect.top - height - 8;
-    const top = above >= 8 ? above : Math.min(innerHeight - height - 8, rect.bottom + 8);
-    toolbarHost.style.left = `${left}px`;
-    toolbarHost.style.top = `${top}px`;
+    placeFloatingHost(toolbarHost, rect, width, height, true);
+    setTimeout(() => {
+      if (toolbarHost?.style.display === "block") {
+        placeFloatingHost(toolbarHost, rect, width, height, true);
+      }
+    }, 80);
   }
 
-  function togglePendingRange() {
-    if (!pendingRange || !selectionAllowed(pendingRange)) return hideToolbar();
-    const removing = matchingAnchorIds(pendingRange);
-    if (removing.length > 0) {
-      const ids = new Set(removing);
-      data.highlights = data.highlights.filter((item) => !ids.has(item.id));
-      markChanged();
-    } else if (data.highlights.length < MAX_HIGHLIGHTS) {
-      const anchor = createAnchor(pendingRange);
-      if (anchor) {
-        data.highlights.push(anchor);
-        markChanged();
-      }
-    }
+  function finishSelectionAction() {
     hideToolbar();
     try {
       getSelection()?.removeAllRanges();
     } catch {}
     scheduleApply(0);
+  }
+
+  function applyPendingColor(color) {
+    if (!pendingRange || !selectionAllowed(pendingRange)) return hideToolbar();
+    if (!Object.hasOwn(COLORS, color)) return;
+    const matching = new Set(matchingAnchorIds(pendingRange));
+    if (matching.size > 0) {
+      for (const anchor of data.highlights) {
+        if (matching.has(anchor.id)) anchor.color = color;
+      }
+      markChanged();
+    } else if (data.highlights.length < MAX_HIGHLIGHTS) {
+      const anchor = createAnchor(pendingRange, color);
+      if (anchor) {
+        data.highlights.push(anchor);
+        markChanged();
+      }
+    }
+    finishSelectionAction();
+  }
+
+  function removePendingHighlights() {
+    if (!pendingRange) return hideToolbar();
+    const matching = new Set(matchingAnchorIds(pendingRange));
+    if (matching.size > 0) {
+      data.highlights = data.highlights.filter((anchor) => !matching.has(anchor.id));
+      markChanged();
+    }
+    finishSelectionAction();
+  }
+
+  function togglePendingRange() {
+    if (!pendingRange || !selectionAllowed(pendingRange)) return hideToolbar();
+    if (matchingAnchorIds(pendingRange).length > 0) removePendingHighlights();
+    else applyPendingColor("yellow");
   }
 
   function ensureToolbar() {
@@ -546,54 +679,194 @@
     toolbarHost = document.createElement("div");
     toolbarHost.id = TOOLBAR_HOST_ID;
     toolbarHost.style.cssText =
-      "display:none;position:fixed;z-index:2147483646;width:42px;height:42px;" +
+      "display:none;position:fixed;z-index:2147483646;width:186px;height:42px;" +
       "pointer-events:auto;isolation:isolate;";
     const shadow = toolbarHost.attachShadow({ mode: "open" });
     const style = document.createElement("style");
     style.textContent = `
-      button {
-        width: 42px;
+      .bar {
         height: 42px;
-        display: grid;
-        place-items: center;
+        box-sizing: border-box;
+        display: flex;
+        align-items: center;
+        gap: 4px;
         border: 1px solid rgba(0,0,0,.13);
         border-radius: 14px;
         background: rgba(255,255,255,.97);
-        color: #242424;
         box-shadow: 0 8px 26px rgba(0,0,0,.18);
+        padding: 5px 7px;
+      }
+      button {
+        width: 30px;
+        height: 30px;
+        display: grid;
+        place-items: center;
+        border: 1px solid transparent;
+        border-radius: 10px;
+        background: transparent;
+        color: #242424;
         cursor: pointer;
         padding: 0;
       }
-      button:hover { background: #fffde7; transform: translateY(-1px); }
+      button:hover { background: rgba(0,0,0,.06); transform: translateY(-1px); }
       button:active { transform: translateY(0); }
-      button::after {
-        content: "";
-        position: absolute;
-        width: 23px;
-        height: 4px;
-        border-radius: 3px;
-        margin-top: 27px;
-        background: #ffeb3b;
+      button[data-active="true"] {
+        border-color: rgba(0,0,0,.38);
+        background: rgba(0,0,0,.06);
       }
-      svg { width: 21px; height: 21px; }
+      .swatch {
+        width: 21px;
+        height: 21px;
+        border-radius: 50%;
+        border: 1px solid rgba(0,0,0,.2);
+        box-sizing: border-box;
+      }
+      .divider { width: 1px; height: 22px; background: rgba(0,0,0,.12); }
+      .delete { color: #d93025; }
+      svg { width: 18px; height: 18px; }
     `;
-    toolbarButton = document.createElement("button");
-    toolbarButton.type = "button";
-    toolbarButton.innerHTML = `
+    toolbarBar = document.createElement("div");
+    toolbarBar.className = "bar";
+    colorButtons.clear();
+    for (const [name, color] of Object.entries(COLORS)) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.dataset.color = name;
+      button.title = `高亮为${color.label}`;
+      button.setAttribute("aria-label", button.title);
+      const swatch = document.createElement("span");
+      swatch.className = "swatch";
+      swatch.style.background = color.value;
+      button.appendChild(swatch);
+      button.addEventListener("pointerdown", (event) => event.preventDefault());
+      button.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        applyPendingColor(name);
+      });
+      colorButtons.set(name, button);
+      toolbarBar.appendChild(button);
+    }
+    const divider = document.createElement("span");
+    divider.className = "divider";
+    toolbarBar.appendChild(divider);
+    deleteButton = document.createElement("button");
+    deleteButton.type = "button";
+    deleteButton.className = "delete";
+    deleteButton.title = "删除高亮";
+    deleteButton.setAttribute("aria-label", deleteButton.title);
+    deleteButton.innerHTML = `
       <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
-        <path d="M4 20h5l10.2-10.2a2.35 2.35 0 0 0-3.32-3.32L5.68 16.68 4 20Z"
-          stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/>
-        <path d="m14.8 7.55 3.32 3.32" stroke="currentColor" stroke-width="1.8"/>
+        <path d="M5 7h14M9 7V4h6v3m-8 0 1 13h8l1-13M10 11v5m4-5v5"
+          stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
       </svg>
     `;
-    toolbarButton.addEventListener("pointerdown", (event) => event.preventDefault());
-    toolbarButton.addEventListener("click", (event) => {
+    deleteButton.addEventListener("pointerdown", (event) => event.preventDefault());
+    deleteButton.addEventListener("click", (event) => {
       event.preventDefault();
       event.stopPropagation();
-      togglePendingRange();
+      removePendingHighlights();
     });
-    shadow.append(style, toolbarButton);
+    toolbarBar.appendChild(deleteButton);
+    shadow.append(style, toolbarBar);
     (document.body || document.documentElement).appendChild(toolbarHost);
+  }
+
+  function anchorAtPoint(x, y) {
+    for (const [id, range] of resolvedRanges) {
+      for (const rect of range.getClientRects()) {
+        if (
+          x >= rect.left - 1 &&
+          x <= rect.right + 1 &&
+          y >= rect.top - 2 &&
+          y <= rect.bottom + 2
+        ) {
+          return { id, rect };
+        }
+      }
+    }
+    return null;
+  }
+
+  function hideHoverToolbar() {
+    if (hoverHideTimer) clearTimeout(hoverHideTimer);
+    hoverHideTimer = 0;
+    if (hoverHost) hoverHost.style.display = "none";
+    hoverAnchorId = null;
+  }
+
+  function scheduleHideHoverToolbar() {
+    if (hoverHideTimer) clearTimeout(hoverHideTimer);
+    hoverHideTimer = setTimeout(hideHoverToolbar, 180);
+  }
+
+  function showHoverToolbar(id, rect) {
+    ensureHoverToolbar();
+    if (hoverHideTimer) clearTimeout(hoverHideTimer);
+    hoverHideTimer = 0;
+    hoverAnchorId = id;
+    hoverHost.style.display = "block";
+    placeFloatingHost(hoverHost, rect, 38, 38, false);
+  }
+
+  function removeHoveredHighlight() {
+    if (!hoverAnchorId) return;
+    const before = data.highlights.length;
+    data.highlights = data.highlights.filter((anchor) => anchor.id !== hoverAnchorId);
+    if (data.highlights.length !== before) markChanged();
+    hideHoverToolbar();
+    scheduleApply(0);
+  }
+
+  function ensureHoverToolbar() {
+    if (hoverHost?.isConnected) return;
+    document.getElementById(HOVER_HOST_ID)?.remove();
+    hoverHost = document.createElement("div");
+    hoverHost.id = HOVER_HOST_ID;
+    hoverHost.style.cssText =
+      "display:none;position:fixed;z-index:2147483645;width:38px;height:38px;" +
+      "pointer-events:auto;isolation:isolate;";
+    const shadow = hoverHost.attachShadow({ mode: "open" });
+    const style = document.createElement("style");
+    style.textContent = `
+      button {
+        width: 38px;
+        height: 38px;
+        display: grid;
+        place-items: center;
+        border: 1px solid rgba(0,0,0,.13);
+        border-radius: 12px;
+        background: rgba(255,255,255,.98);
+        color: #d93025;
+        box-shadow: 0 7px 22px rgba(0,0,0,.18);
+        cursor: pointer;
+        padding: 0;
+      }
+      button:hover { background: #fff1f0; transform: translateY(-1px); }
+      svg { width: 18px; height: 18px; }
+    `;
+    hoverDeleteButton = document.createElement("button");
+    hoverDeleteButton.type = "button";
+    hoverDeleteButton.title = "删除高亮";
+    hoverDeleteButton.setAttribute("aria-label", hoverDeleteButton.title);
+    hoverDeleteButton.innerHTML = `
+      <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <path d="M5 7h14M9 7V4h6v3m-8 0 1 13h8l1-13M10 11v5m4-5v5"
+          stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+    `;
+    hoverDeleteButton.addEventListener("pointerdown", (event) => event.preventDefault());
+    hoverDeleteButton.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      removeHoveredHighlight();
+    });
+    hoverHost.addEventListener("pointerenter", () => {
+      if (hoverHideTimer) clearTimeout(hoverHideTimer);
+    });
+    hoverHost.addEventListener("pointerleave", scheduleHideHoverToolbar);
+    shadow.append(style, hoverDeleteButton);
+    (document.body || document.documentElement).appendChild(hoverHost);
   }
 
   function captureSelection() {
@@ -613,17 +886,43 @@
       applyTimer = 0;
     }
     applyHighlights();
+    hideHoverToolbar();
     showToolbar(range);
   }
 
   function onPointerUp(event) {
-    if (toolbarHost?.contains(event.target)) return;
+    if (toolbarHost?.contains(event.target) || hoverHost?.contains(event.target)) return;
     setTimeout(captureSelection, 0);
+  }
+
+  function onPointerMove(event) {
+    if (
+      toolbarHost?.contains(event.target) ||
+      hoverHost?.contains(event.target)
+    ) {
+      if (hoverHideTimer) clearTimeout(hoverHideTimer);
+      return;
+    }
+    const selection = getSelection();
+    if (selection && !selection.isCollapsed) {
+      scheduleHideHoverToolbar();
+      return;
+    }
+    const x = event.clientX;
+    const y = event.clientY;
+    if (hoverMoveFrame) cancelAnimationFrame(hoverMoveFrame);
+    hoverMoveFrame = requestAnimationFrame(() => {
+      hoverMoveFrame = 0;
+      const hit = anchorAtPoint(x, y);
+      if (hit) showHoverToolbar(hit.id, hit.rect);
+      else scheduleHideHoverToolbar();
+    });
   }
 
   function onKeyDown(event) {
     if (event.key === "Escape") {
       hideToolbar();
+      hideHoverToolbar();
       return;
     }
     if (event.ctrlKey && event.shiftKey && event.key.toLowerCase() === "h") {
@@ -666,6 +965,7 @@
     if (disposed) return false;
     ensureStyle();
     ensureToolbar();
+    ensureHoverToolbar();
     scheduleApply(0);
     return true;
   }
@@ -685,21 +985,29 @@
     if (disposed) return true;
     disposed = true;
     document.removeEventListener("pointerup", onPointerUp, true);
+    document.removeEventListener("pointermove", onPointerMove, true);
     document.removeEventListener("keydown", onKeyDown, true);
     observer?.disconnect();
     if (routeTimer) clearInterval(routeTimer);
     if (applyTimer) clearTimeout(applyTimer);
+    if (hoverHideTimer) clearTimeout(hoverHideTimer);
+    if (hoverMoveFrame) cancelAnimationFrame(hoverMoveFrame);
     try {
-      CSS.highlights?.delete(HIGHLIGHT_NAME);
+      CSS.highlights?.delete(HIGHLIGHT_PREFIX);
+      for (const name of Object.keys(COLORS)) {
+        CSS.highlights?.delete(`${HIGHLIGHT_PREFIX}-${name}`);
+      }
     } catch {}
     document.getElementById(STYLE_ID)?.remove();
     toolbarHost?.remove();
+    hoverHost?.remove();
     delete window[STATE_KEY];
     return true;
   }
 
   loadLocalData();
   document.addEventListener("pointerup", onPointerUp, true);
+  document.addEventListener("pointermove", onPointerMove, true);
   document.addEventListener("keydown", onKeyDown, true);
   observer = new MutationObserver((records) => {
     if (records.some((record) => record.type === "childList" || record.type === "characterData")) {
@@ -718,9 +1026,16 @@
     if (current !== lastContextKey) {
       lastContextKey = current;
       hideToolbar();
+      hideHoverToolbar();
       scheduleApply(0);
     }
-    if (!document.getElementById(STYLE_ID) || !toolbarHost?.isConnected) ensure();
+    if (
+      !document.getElementById(STYLE_ID) ||
+      !toolbarHost?.isConnected ||
+      !hoverHost?.isConnected
+    ) {
+      ensure();
+    }
   }, 1200);
 
   window[STATE_KEY] = {

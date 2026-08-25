@@ -13,8 +13,10 @@ It does not add translation, summarization, AI prompts, or a system-wide screen 
 1. Run `build.ps1` or download a release build.
 2. Start `Start-Codex-Highlighter.cmd`.
 3. Approve the one-time Codex restart when prompted.
-4. Select text inside the Codex transcript and click the yellow marker.
-5. Select highlighted text and click the marker again to remove it.
+4. Select text in the main transcript or side chat and choose yellow, green, cyan, pink, or purple.
+5. Hover highlighted text and click the trash button to remove it.
+
+Selecting an existing highlight also lets you recolor or delete it. The palette prefers a position below the selection and avoids Codex's native selection action menu.
 
 `Ctrl+Shift+H` also toggles the current selection.
 
@@ -46,7 +48,7 @@ dist\CodexHighlighter.exe
 
 ## Tests
 
-The test suite checks JavaScript syntax, embedded resources, data validation, Codex discovery, loopback ports, and real Chromium behavior for add, re-anchor, adjacent selections, and remove.
+The test suite checks JavaScript syntax, embedded resources, data validation, Codex discovery, loopback ports, and real Chromium behavior for main/side transcript selection, five colors, native-menu avoidance, re-anchoring, adjacent selections, recoloring, and hover deletion.
 
 ```powershell
 .\tests\run-tests.ps1
