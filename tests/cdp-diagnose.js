@@ -1,6 +1,7 @@
 "use strict";
 
 const port = Number(process.argv[2] || 9460);
+const highlightNeedle = process.argv[3] || "";
 
 async function evaluate(target, expression) {
   return new Promise((resolve, reject) => {
@@ -40,6 +41,7 @@ async function evaluate(target, expression) {
   const pages = targets.filter(
     (target) => target.type === "page" && target.url.startsWith("app://"),
   );
+  const encodedNeedle = JSON.stringify(highlightNeedle);
   for (const target of pages) {
     const result = await evaluate(
       target,
@@ -51,6 +53,27 @@ async function evaluate(target, expression) {
         mainElements: document.querySelectorAll('main').length,
         roleMainElements: document.querySelectorAll('[role="main"]').length,
         bodyTextLength: (document.body?.innerText || '').length,
+        highlightLocations: (() => {
+          const needle = ${encodedNeedle};
+          if (!needle) return [];
+          const result = [];
+          for (const [name, highlight] of CSS.highlights || []) {
+            if (!name.startsWith('codex-study-highlight-')) continue;
+            for (const range of highlight) {
+              if (range.toString() !== needle) continue;
+              const parent = range.startContainer?.parentElement;
+              result.push({
+                color: name.replace('codex-study-highlight-', ''),
+                tag: parent?.tagName || '',
+                editable: Boolean(parent?.closest(
+                  "input,textarea,[contenteditable='true'],[contenteditable='']," +
+                  "[role='textbox'],[data-lexical-editor='true']"
+                ))
+              });
+            }
+          }
+          return result;
+        })(),
         bodyChildren: [...(document.body?.children || [])].map(node => ({
           tag: node.tagName,
           id: node.id,

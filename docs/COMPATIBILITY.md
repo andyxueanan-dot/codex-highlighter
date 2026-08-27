@@ -1,6 +1,6 @@
 # Compatibility matrix
 
-Last verified: 2026-08-25
+Last verified: 2026-08-27
 
 | Platform | Codex Desktop | Chromium | Status | Evidence |
 | --- | --- | --- | --- | --- |
@@ -18,6 +18,7 @@ A verified row has passed all of the following on a real Codex installation:
 - inject and health-check the renderer runtime;
 - highlight main and side-chat transcript text;
 - persist and re-anchor highlights after DOM replacement;
+- keep short-word anchors isolated when duplicate words appear later or inside editable composers;
 - add, recolor and delete all five colors;
 - show direct hover deletion and avoid the native selection menu;
 - export, import, search, delete and clear records in the native manager;

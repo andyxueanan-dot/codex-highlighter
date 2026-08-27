@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.1.1 - 2026-08-27
+
+- Prevent short highlights such as “four” or “四个” from migrating to later duplicate words.
+- Require the original scope fingerprint or reliable surrounding context before re-anchoring.
+- Normalize layout whitespace so genuine React re-renders still restore the original highlight.
+- Exclude text boxes, content-editable regions, Lexical editors, and other composer surfaces from highlight restoration.
+- Add regression coverage for duplicate short words, removed source nodes, restored source nodes, and editable composers.
+
 ## 1.1.0 - 2026-08-25
 
 - Support text selection in Codex side-chat and secondary transcript panels.

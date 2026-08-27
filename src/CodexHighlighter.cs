@@ -16,8 +16,8 @@ using System.Windows.Forms;
 [assembly: AssemblyTitle("Codex Highlighter")]
 [assembly: AssemblyDescription("Persistent yellow text highlighting for the Codex desktop transcript")]
 [assembly: AssemblyProduct("Codex Highlighter")]
-[assembly: AssemblyVersion("1.1.0.0")]
-[assembly: AssemblyFileVersion("1.1.0.0")]
+[assembly: AssemblyVersion("1.1.1.0")]
+[assembly: AssemblyFileVersion("1.1.1.0")]
 
 namespace CodexHighlighter
 {
@@ -339,7 +339,7 @@ namespace CodexHighlighter
 
     internal sealed class HighlighterHost : IDisposable
     {
-        private const string Version = "1.1.0";
+        private const string Version = "1.1.1";
         private const int DefaultPort = 9460;
         private readonly object statusGate = new object();
         private readonly CdpClient cdp = new CdpClient();

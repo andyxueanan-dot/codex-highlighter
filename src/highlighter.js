@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const VERSION = "1.1.0";
+  const VERSION = "1.1.1";
   const STATE_KEY = "__CODEX_HIGHLIGHTER__";
   const STORAGE_KEY = "codex-highlighter:data:v1";
   const STYLE_ID = "codex-highlighter-style";
@@ -17,6 +17,9 @@
   };
   const MAX_HIGHLIGHTS = 2000;
   const MAX_SELECTION_LENGTH = 5000;
+  const EDITABLE_SELECTOR =
+    "input,textarea,select,[contenteditable='true'],[contenteditable='']," +
+    "[role='textbox'],[data-lexical-editor='true']";
 
   if (window[STATE_KEY]?.version === VERSION) {
     window[STATE_KEY].ensure();
@@ -184,8 +187,7 @@
       return false;
     }
     const blocked =
-      "input,textarea,select,[contenteditable='true'],[contenteditable='']," +
-      "button,[role='button'],nav,[role='dialog'],[role='menu']," +
+      `${EDITABLE_SELECTOR},button,[role='button'],nav,[role='dialog'],[role='menu'],` +
       `#${TOOLBAR_HOST_ID},#${HOVER_HOST_ID}`;
     if (start.closest(blocked) || end.closest(blocked)) return false;
     const exact = range.toString();
@@ -255,20 +257,21 @@
   }
 
   function offsetWithin(scope, container, offset) {
-    const before = document.createRange();
-    before.selectNodeContents(scope);
-    try {
-      before.setEnd(container, offset);
-      return before.toString().length;
-    } catch {
-      return -1;
+    if (container?.nodeType !== Node.TEXT_NODE) return -1;
+    let position = 0;
+    for (const node of textNodes(scope)) {
+      if (node === container) {
+        return position + Math.min(Math.max(0, offset), node.data.length);
+      }
+      position += node.data.length;
     }
+    return -1;
   }
 
   function createAnchor(range, color = "yellow") {
     const scope = chooseScope(range);
     if (!scope) return null;
-    const scopeText = scope.textContent || "";
+    const scopeText = scopedText(scope);
     const start = offsetWithin(scope, range.startContainer, range.startOffset);
     const end = offsetWithin(scope, range.endContainer, range.endOffset);
     if (start < 0 || end <= start) return null;
@@ -298,7 +301,7 @@
         if (!parent) return NodeFilter.FILTER_REJECT;
         if (
           parent.closest(
-            `#${TOOLBAR_HOST_ID},#${HOVER_HOST_ID},script,style,noscript`,
+            `#${TOOLBAR_HOST_ID},#${HOVER_HOST_ID},${EDITABLE_SELECTOR},script,style,noscript`,
           )
         ) {
           return NodeFilter.FILTER_REJECT;
@@ -312,6 +315,12 @@
       node = walker.nextNode();
     }
     return nodes;
+  }
+
+  function scopedText(root) {
+    return textNodes(root)
+      .map((node) => node.data)
+      .join("");
   }
 
   function rangeFromOffsets(scope, start, end) {
@@ -341,7 +350,10 @@
     const seen = new Set();
     const add = (node) => {
       if (!node || seen.has(node) || node === toolbarHost) return;
-      const length = (node.textContent || "").length;
+      if (node.matches?.(EDITABLE_SELECTOR) || node.closest?.(EDITABLE_SELECTOR)) {
+        return;
+      }
+      const length = scopedText(node).length;
       if (!length || length > 50000) return;
       seen.add(node);
       result.push(node);
@@ -356,7 +368,6 @@
       if (result.length >= 2000) break;
     }
     for (const surface of root.querySelectorAll("main,aside")) add(surface);
-    add(root);
     return result;
   }
 
@@ -372,16 +383,76 @@
     return positions;
   }
 
+  function normalizeContext(text) {
+    return String(text || "")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+
   function endingMatch(text, expected) {
     if (!expected) return 0;
-    const sample = expected.slice(-64);
-    return text.endsWith(sample) ? sample.length : 0;
+    const normalizedText = normalizeContext(text);
+    const sample = normalizeContext(expected).slice(-64);
+    return sample && normalizedText.endsWith(sample) ? sample.length : 0;
   }
 
   function startingMatch(text, expected) {
     if (!expected) return 0;
-    const sample = expected.slice(0, 64);
-    return text.startsWith(sample) ? sample.length : 0;
+    const normalizedText = normalizeContext(text);
+    const sample = normalizeContext(expected).slice(0, 64);
+    return sample && normalizedText.startsWith(sample) ? sample.length : 0;
+  }
+
+  function hasReliableContext(anchor, text, start, end, hashMatches) {
+    if (hashMatches) return true;
+
+    const normalizedText = normalizeContext(text);
+    const normalizedLead = normalizeContext(anchor.scopeLead);
+    const normalizedTail = normalizeContext(anchor.scopeTail);
+    const leadMatches =
+      normalizedLead.length >= 8 && normalizedText.startsWith(normalizedLead);
+    const tailMatches =
+      normalizedTail.length >= 8 && normalizedText.endsWith(normalizedTail);
+    if (leadMatches || tailMatches) return true;
+
+    const prefixMatch = endingMatch(text.slice(0, start), anchor.prefix);
+    const suffixMatch = startingMatch(text.slice(end), anchor.suffix);
+    const prefixAvailable = normalizeContext(anchor.prefix).length;
+    const suffixAvailable = normalizeContext(anchor.suffix).length;
+    const available = prefixAvailable + suffixAvailable;
+    const matched = prefixMatch + suffixMatch;
+
+    if (anchor.exact.length <= 4) {
+      const hasPrefix = prefixAvailable > 0;
+      const hasSuffix = suffixAvailable > 0;
+      if (hasPrefix && hasSuffix) {
+        return (
+          prefixMatch >= Math.min(4, prefixAvailable) &&
+          suffixMatch >= Math.min(4, suffixAvailable) &&
+          matched >= Math.min(8, available)
+        );
+      }
+      const singleSideMatch = hasPrefix ? prefixMatch : suffixMatch;
+      const singleSideAvailable = hasPrefix
+        ? prefixAvailable
+        : suffixAvailable;
+      return (
+        singleSideAvailable > 0 &&
+        singleSideMatch >= Math.min(12, singleSideAvailable)
+      );
+    }
+
+    const prefixEnough =
+      prefixAvailable === 0 ||
+      prefixMatch >= Math.min(6, prefixAvailable);
+    const suffixEnough =
+      suffixAvailable === 0 ||
+      suffixMatch >= Math.min(6, suffixAvailable);
+    return (
+      prefixEnough &&
+      suffixEnough &&
+      matched >= Math.min(16, available)
+    );
   }
 
   function anchorToRange(anchor, scopes) {
@@ -395,17 +466,22 @@
     }
     let best = null;
     for (const scope of scopes || candidateScopes()) {
-      const text = scope.textContent || "";
+      const text = scopedText(scope);
       if (text.length < anchor.exact.length) continue;
       const hashMatches = fingerprint(text) === anchor.scopeHash;
       for (const start of occurrences(text, anchor.exact)) {
         const end = start + anchor.exact.length;
+        if (!hasReliableContext(anchor, text, start, end, hashMatches)) {
+          continue;
+        }
+        const prefixMatch = endingMatch(text.slice(0, start), anchor.prefix);
+        const suffixMatch = startingMatch(text.slice(end), anchor.suffix);
         let score = 10;
         if (hashMatches) score += 1000;
         if (anchor.scopeTag && scope.tagName === anchor.scopeTag) score += 8;
         if (anchor.contextKey && anchor.contextKey === currentContext) score += 30;
-        score += endingMatch(text.slice(0, start), anchor.prefix) * 3;
-        score += startingMatch(text.slice(end), anchor.suffix) * 3;
+        score += prefixMatch * 3;
+        score += suffixMatch * 3;
         if (anchor.scopeLead && text.startsWith(anchor.scopeLead)) score += 70;
         if (anchor.scopeTail && text.endsWith(anchor.scopeTail)) score += 70;
         score += Math.max(0, 50 - Math.min(50, Math.abs(start - anchor.start)));

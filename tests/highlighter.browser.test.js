@@ -83,6 +83,9 @@ function intersects(left, right) {
           <article data-message-id="message-1">
             <p id="answer">Alpha beta gamma delta. Stable anchoring test.</p>
           </article>
+          <div id="short-anchor-zone"></div>
+          <div id="duplicate-zone"></div>
+          <div id="composer-zone" role="textbox" contenteditable="true"></div>
         </main>
         <aside id="side-chat">
           <article data-message-id="side-message-1">
@@ -164,9 +167,29 @@ function intersects(left, right) {
           <p id="answer">Alpha beta gamma delta. Stable anchoring test.</p>
         </article>`;
     });
-    await page.waitForFunction(
-      () => window.__CODEX_HIGHLIGHTER__.health().resolved === 1,
-    );
+    await page.waitForTimeout(450);
+    const rerenderState = await page.evaluate(() => {
+      const data = JSON.parse(window.__CODEX_HIGHLIGHTER__.exportData());
+      const text = document.querySelector("main article")?.textContent || "";
+      const fingerprint = (value) => {
+        const source = `${value.length}|${value.slice(0, 256)}|${value.slice(-256)}`;
+        let hash = 0x811c9dc5;
+        for (let index = 0; index < source.length; index += 1) {
+          hash ^= source.charCodeAt(index);
+          hash = Math.imul(hash, 0x01000193);
+        }
+        return (hash >>> 0).toString(16).padStart(8, "0");
+      };
+      return {
+        health: window.__CODEX_HIGHLIGHTER__.health(),
+        anchor: data.highlights[0],
+        candidateText: text,
+        candidateHash: fingerprint(text),
+      };
+    });
+    if (rerenderState.health.resolved !== 1) {
+      throw new Error(`Original re-render did not re-anchor: ${JSON.stringify(rerenderState)}`);
+    }
 
     await selectText(page, "#answer", 6, 16);
     const deleteVisible = await page.evaluate(() =>
@@ -231,8 +254,102 @@ function intersects(left, right) {
       throw new Error("Hover delete did not remove the anchor");
     }
 
+    await page.evaluate(() => {
+      document.querySelector("#short-anchor-zone").innerHTML =
+        '<h3 id="short-answer">3. GAT的四个计算步骤</h3>';
+    });
+    await selectText(page, "#short-answer", 7, 9);
+    await clickColor(page, "yellow");
+    await page.waitForFunction(
+      () =>
+        window.__CODEX_HIGHLIGHTER__.health().count === 1 &&
+        window.__CODEX_HIGHLIGHTER__.health().resolved === 1,
+    );
+
+    await page.evaluate(() => {
+      document.querySelector("#duplicate-zone").innerHTML =
+        '<p id="later-short">后面再次出现四个不应高亮。</p>';
+      document.querySelector("#composer-zone").innerHTML =
+        '<span id="composer-short">我想问这四个配置。</span>';
+    });
+    await page.waitForTimeout(350);
+    const shortAnchor = await page.evaluate(() => {
+      const ranges = Array.from(
+        CSS.highlights.get("codex-study-highlight-yellow") || [],
+      );
+      return {
+        resolved: window.__CODEX_HIGHLIGHTER__.health().resolved,
+        rangeCount: ranges.length,
+        ownerId: ranges[0]?.startContainer?.parentElement?.id || "",
+      };
+    });
+    if (
+      shortAnchor.resolved !== 1 ||
+      shortAnchor.rangeCount !== 1 ||
+      shortAnchor.ownerId !== "short-answer"
+    ) {
+      throw new Error(`Short anchor moved to a duplicate: ${JSON.stringify(shortAnchor)}`);
+    }
+
+    await page.evaluate(() => document.querySelector("#short-answer").remove());
+    await page.waitForFunction(
+      () => window.__CODEX_HIGHLIGHTER__.health().resolved === 0,
+    );
+    await page.waitForTimeout(350);
+    const duplicateState = await page.evaluate(() => {
+      const ranges = Array.from(
+        CSS.highlights.get("codex-study-highlight-yellow") || [],
+      );
+      return {
+        resolved: window.__CODEX_HIGHLIGHTER__.health().resolved,
+        rangeCount: ranges.length,
+        ownerId: ranges[0]?.startContainer?.parentElement?.id || "",
+      };
+    });
+    if (duplicateState.resolved !== 0 || duplicateState.rangeCount !== 0) {
+      throw new Error(
+        `A later duplicate inherited the removed short highlight: ${JSON.stringify(duplicateState)}`,
+      );
+    }
+
+    await page.evaluate(() => {
+      document.querySelector("#short-anchor-zone").innerHTML =
+        '<h3 id="short-answer">3. GAT的四个计算步骤</h3>';
+    });
+    await page.waitForFunction(
+      () => window.__CODEX_HIGHLIGHTER__.health().resolved === 1,
+    );
+    await selectText(page, "#short-answer", 7, 9);
+    await clickSelectionDelete(page);
+    await page.waitForFunction(
+      () => window.__CODEX_HIGHLIGHTER__.health().count === 0,
+    );
+
+    await page.evaluate(() => {
+      const text = document.querySelector("#composer-short").firstChild;
+      const start = text.data.indexOf("四个");
+      const range = document.createRange();
+      range.setStart(text, start);
+      range.setEnd(text, start + 2);
+      const selection = getSelection();
+      selection.removeAllRanges();
+      selection.addRange(range);
+      document
+        .querySelector("#composer-short")
+        .dispatchEvent(new PointerEvent("pointerup", { bubbles: true }));
+    });
+    await page.waitForTimeout(120);
+    const editableToolbarDisplay = await page.evaluate(
+      () =>
+        document.querySelector("#codex-highlighter-toolbar-host")?.style.display ||
+        "none",
+    );
+    if (editableToolbarDisplay !== "none") {
+      throw new Error("Editable composer text incorrectly opened the highlight palette");
+    }
+
     process.stdout.write(
-      "PASS browser-multi-surface-palette-avoidance-reanchor-hover-delete\n",
+      "PASS browser-multi-surface-palette-reanchor-hover-delete-short-anchor-isolation\n",
     );
   } finally {
     await browser.close();
