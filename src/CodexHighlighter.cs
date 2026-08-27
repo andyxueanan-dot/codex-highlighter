@@ -16,8 +16,8 @@ using System.Windows.Forms;
 [assembly: AssemblyTitle("Codex Highlighter")]
 [assembly: AssemblyDescription("Persistent yellow text highlighting for the Codex desktop transcript")]
 [assembly: AssemblyProduct("Codex Highlighter")]
-[assembly: AssemblyVersion("1.1.1.0")]
-[assembly: AssemblyFileVersion("1.1.1.0")]
+[assembly: AssemblyVersion("1.1.2.0")]
+[assembly: AssemblyFileVersion("1.1.2.0")]
 
 namespace CodexHighlighter
 {
@@ -52,7 +52,8 @@ namespace CodexHighlighter
                 {
                     Application.EnableVisualStyles();
                     Application.SetCompatibleTextRenderingDefault(false);
-                    Application.Run(new HighlighterApplicationContext());
+                    Application.Run(new HighlighterApplicationContext(
+                        HasArgument(args, "--startup")));
                     return 0;
                 }
                 catch (Exception exception)
@@ -149,12 +150,14 @@ namespace CodexHighlighter
         private readonly System.Windows.Forms.Timer startupTimer;
         private readonly System.Windows.Forms.Timer uiTimer;
         private readonly HighlighterHost host;
+        private readonly bool startupMode;
         private HighlightManagerForm managerForm;
         private bool connecting;
 
-        internal HighlighterApplicationContext()
+        internal HighlighterApplicationContext(bool startInBackground)
         {
             AppPaths.Ensure();
+            startupMode = startInBackground;
             host = new HighlighterHost();
 
             ContextMenuStrip menu = new ContextMenuStrip();
@@ -225,7 +228,8 @@ namespace CodexHighlighter
         private void OnStartup(object sender, EventArgs eventArgs)
         {
             startupTimer.Stop();
-            ConnectInteractive();
+            if (startupMode) host.StartWatching();
+            else ConnectInteractive();
         }
 
         private void ConnectInteractive()
@@ -339,7 +343,7 @@ namespace CodexHighlighter
 
     internal sealed class HighlighterHost : IDisposable
     {
-        private const string Version = "1.1.1";
+        private const string Version = "1.1.2";
         private const int DefaultPort = 9460;
         private readonly object statusGate = new object();
         private readonly CdpClient cdp = new CdpClient();
@@ -348,8 +352,12 @@ namespace CodexHighlighter
         private System.Threading.Timer monitorTimer;
         private int monitorBusy;
         private int monitorAttempts;
+        private int consecutiveFailures;
+        private int recoveryBusy;
         private int port;
         private bool disposed;
+        private bool watchForCodex;
+        private DateTime nextRecoveryUtc = DateTime.MinValue;
         private string status = "等待连接";
         private bool active;
         private bool connected;
@@ -388,6 +396,7 @@ namespace CodexHighlighter
         internal void EnsureConnected(bool interactive)
         {
             ThrowIfDisposed();
+            watchForCodex = true;
             int existingPort = FindExistingPort();
             if (existingPort > 0)
             {
@@ -443,6 +452,27 @@ namespace CodexHighlighter
             SavePort(port);
             StartMonitor();
             MonitorNow();
+        }
+
+        internal void StartWatching()
+        {
+            ThrowIfDisposed();
+            watchForCodex = true;
+            int existingPort = FindExistingPort();
+            port = existingPort > 0
+                ? existingPort
+                : ReadPort(AppPaths.PortFile);
+            if (port <= 0) port = DefaultPort;
+            if (existingPort > 0)
+            {
+                SavePort(port);
+                SetStatus("正在连接 Codex", true, false);
+            }
+            else
+            {
+                SetStatus("等待 Codex 启动", false, false);
+            }
+            StartMonitor();
         }
 
         private int FindExistingPort()
@@ -553,6 +583,16 @@ namespace CodexHighlighter
             int attempt = Interlocked.Increment(ref monitorAttempts);
             try
             {
+                if (!IsConnected)
+                {
+                    string executable = CodexInstallLocator.Find();
+                    if (!CodexProcessManager.IsRunning(executable))
+                    {
+                        consecutiveFailures = 0;
+                        SetStatus("等待 Codex 启动", false, false);
+                        return;
+                    }
+                }
                 if (attempt <= 3) Log.Write("Monitor attempt " + attempt + " started");
                 List<CdpTarget> targets = cdp.GetTargets(port);
                 targets.RemoveAll(delegate(CdpTarget target)
@@ -597,17 +637,76 @@ namespace CodexHighlighter
 
                 if (!string.IsNullOrEmpty(bestData)) store.SaveIfNewer(bestData);
                 int count = store.Count(bestData);
+                consecutiveFailures = 0;
                 if (attempt <= 3) Log.Write("Monitor attempt " + attempt + " completed");
                 SetStatus("已启用（" + count + " 处高亮）", true, true);
             }
             catch (Exception exception)
             {
-                Log.Write("Monitor tick failed", exception);
-                SetStatus("连接暂时中断", false, false);
+                HandleMonitorFailure(exception);
             }
             finally
             {
                 Interlocked.Exchange(ref monitorBusy, 0);
+            }
+        }
+
+        private void HandleMonitorFailure(Exception exception)
+        {
+            int failures = Interlocked.Increment(ref consecutiveFailures);
+            if (failures == 1 || failures % 10 == 0)
+            {
+                Log.Write("Monitor connection failed (attempt " + failures + ")", exception);
+            }
+            SetStatus("Codex 连接中断，等待自动恢复", false, false);
+            if (!watchForCodex || failures < 3 || DateTime.UtcNow < nextRecoveryUtc)
+            {
+                return;
+            }
+            if (Interlocked.Exchange(ref recoveryBusy, 1) != 0) return;
+            try
+            {
+                string executable = CodexInstallLocator.Find();
+                if (!CodexProcessManager.IsRunning(executable))
+                {
+                    consecutiveFailures = 0;
+                    SetStatus("等待 Codex 启动", false, false);
+                    return;
+                }
+
+                nextRecoveryUtc = DateTime.UtcNow.AddSeconds(45);
+                SetStatus("正在自动恢复 Codex 高亮", false, false);
+                Log.Write("Recovering Codex after its debugging endpoint disappeared");
+                CodexProcessManager.Close(executable);
+                port = SelectFreePort(DefaultPort);
+                CodexProcessManager.Launch(executable, port);
+
+                DateTime deadline = DateTime.UtcNow.AddSeconds(45);
+                while (!disposed && DateTime.UtcNow < deadline && !cdp.EndpointReady(port))
+                {
+                    Thread.Sleep(350);
+                }
+                if (disposed) return;
+                if (!cdp.EndpointReady(port))
+                {
+                    throw new TimeoutException("自动恢复后 Codex 未在 45 秒内开放调试端口。");
+                }
+
+                SavePort(port);
+                consecutiveFailures = 0;
+                monitorAttempts = 0;
+                SetStatus("自动恢复成功，正在注入", true, false);
+                Log.Write("Codex automatic recovery succeeded on port " + port);
+            }
+            catch (Exception recoveryException)
+            {
+                nextRecoveryUtc = DateTime.UtcNow.AddSeconds(60);
+                SetStatus("自动恢复失败，可从托盘手动重连", false, false);
+                Log.Write("Codex automatic recovery failed", recoveryException);
+            }
+            finally
+            {
+                Interlocked.Exchange(ref recoveryBusy, 0);
             }
         }
 

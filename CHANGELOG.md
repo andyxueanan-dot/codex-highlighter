@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.1.2 - 2026-08-27
+
+- Start the tray host automatically for the current Windows user after installation.
+- Add a silent `--startup` watch mode that waits when Codex is closed instead of launching it at sign-in.
+- Automatically recover highlighting when Codex is later opened or restarted without the CDP flags.
+- Require three consecutive endpoint failures before recovery to avoid reacting to brief renderer stalls.
+- Back off after failed recovery and collapse repeated timeout logging.
+- Remove both Start menu and startup shortcuts during uninstall.
+- Add installer regression coverage for shortcut creation, startup arguments, cleanup, and data preservation.
+
 ## 1.1.1 - 2026-08-27
 
 - Prevent short highlights such as “four” or “四个” from migrating to later duplicate words.

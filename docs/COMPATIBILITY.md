@@ -23,6 +23,7 @@ A verified row has passed all of the following on a real Codex installation:
 - show direct hover deletion and avoid the native selection menu;
 - export, import, search, delete and clear records in the native manager;
 - install, update, preserve data, uninstall and purge in a temporary user directory.
+- start from the current-user Windows Startup folder, wait for Codex, and automatically recover a normally launched Codex session.
 
 ## Codex update policy
 

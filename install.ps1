@@ -1,7 +1,10 @@
 param(
     [string]$InstallRoot = (Join-Path $env:LOCALAPPDATA 'CodexHighlighter'),
     [switch]$NoStart,
-    [switch]$NoShortcut
+    [switch]$NoShortcut,
+    [switch]$NoStartup,
+    [string]$ProgramsDirectory = [Environment]::GetFolderPath('Programs'),
+    [string]$StartupDirectory = [Environment]::GetFolderPath('Startup')
 )
 
 $ErrorActionPreference = 'Stop'
@@ -51,19 +54,36 @@ foreach ($name in @('LICENSE', 'SECURITY.md')) {
     }
 }
 
-if (-not $NoShortcut) {
-    $programs = [Environment]::GetFolderPath('Programs')
-    $shortcutPath = Join-Path $programs 'Codex Highlighter.lnk'
+function New-CodexHighlighterShortcut {
+    param(
+        [string]$Path,
+        [string]$Arguments = ''
+    )
     $shell = New-Object -ComObject WScript.Shell
-    $shortcut = $shell.CreateShortcut($shortcutPath)
+    $shortcut = $shell.CreateShortcut($Path)
     $shortcut.TargetPath = $targetExecutable
+    $shortcut.Arguments = $Arguments
     $shortcut.WorkingDirectory = $appDirectory
     $shortcut.Description = 'Persistent text highlighting for Codex Desktop'
     $shortcut.Save()
 }
 
+if (-not $NoShortcut) {
+    New-Item -ItemType Directory -Path $ProgramsDirectory -Force | Out-Null
+    New-CodexHighlighterShortcut `
+        -Path (Join-Path $ProgramsDirectory 'Codex Highlighter.lnk')
+}
+
+if (-not $NoStartup) {
+    New-Item -ItemType Directory -Path $StartupDirectory -Force | Out-Null
+    New-CodexHighlighterShortcut `
+        -Path (Join-Path $StartupDirectory 'Codex Highlighter.lnk') `
+        -Arguments '--startup'
+}
+
 Write-Output "Installed Codex Highlighter to: $targetExecutable"
 Write-Output "Saved highlights remain in: $(Join-Path $resolvedInstallRoot 'highlights.json')"
+if (-not $NoStartup) { Write-Output 'Enabled current-user startup recovery.' }
 
 if (-not $NoStart) {
     Start-Process -FilePath $targetExecutable
