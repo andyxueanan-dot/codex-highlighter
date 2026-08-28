@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const VERSION = "1.2.2";
+  const VERSION = "1.2.3";
   const STATE_KEY = "__CODEX_HIGHLIGHTER__";
   const STORAGE_KEY = "codex-highlighter:data:v1";
   const STYLE_ID = "codex-highlighter-style";
@@ -21,6 +21,10 @@
     "input,textarea,select,[contenteditable='true'],[contenteditable='']," +
     "[role='textbox'],[data-lexical-editor='true']";
   const LITERAL_TEXT_SELECTOR = "pre,code,samp,kbd,tt";
+  const TABLE_CELL_SELECTOR =
+    "td,th,[role='cell'],[role='gridcell'],[role='columnheader'],[role='rowheader']";
+  const TABLE_ROW_SELECTOR = "tr,[role='row']";
+  const TABLE_CONTAINER_SELECTOR = "table,[role='table'],[role='grid']";
 
   if (window[STATE_KEY]?.version === VERSION) {
     window[STATE_KEY].ensure();
@@ -209,14 +213,23 @@
     if (start.closest(hardBlocked) || end.closest(hardBlocked)) return false;
     const literalStart = start.closest(LITERAL_TEXT_SELECTOR);
     const literalEnd = end.closest(LITERAL_TEXT_SELECTOR);
-    const interactiveStart = start.closest("button,[role='button']");
-    const interactiveEnd = end.closest("button,[role='button']");
-    if (
-      (interactiveStart || interactiveEnd) &&
-      (!literalStart || !literalEnd)
-    ) {
-      return false;
-    }
+    const tableStart = start.closest(TABLE_CONTAINER_SELECTOR);
+    const tableEnd = end.closest(TABLE_CONTAINER_SELECTOR);
+    const structuredSelection =
+      (literalStart && literalEnd) ||
+      (tableStart && tableStart === tableEnd);
+    if (start.closest("button") || end.closest("button")) return false;
+    const interactiveStart = start.closest("[role='button']");
+    const interactiveEnd = end.closest("[role='button']");
+    const startTarget = tableStart || literalStart;
+    const endTarget = tableEnd || literalEnd;
+    const wrappedStart =
+      !interactiveStart ||
+      (structuredSelection && startTarget && interactiveStart.contains(startTarget));
+    const wrappedEnd =
+      !interactiveEnd ||
+      (structuredSelection && endTarget && interactiveEnd.contains(endTarget));
+    if (!wrappedStart || !wrappedEnd) return false;
     const exact = range.toString();
     return exact.trim().length > 0 && exact.length <= MAX_SELECTION_LENGTH;
   }
@@ -233,6 +246,51 @@
       "[data-message-id],[data-turn-id],[data-testid*='conversation-turn']," +
         "[data-testid*='message'],article,[role='article']",
     );
+    let base = "";
+    if (semantic) {
+      for (const name of ["data-message-id", "data-turn-id", "data-testid", "id"]) {
+        const value = semantic.getAttribute(name);
+        if (value) {
+          base = name + ":" + value;
+          break;
+        }
+      }
+    }
+
+    const table = element?.closest?.(TABLE_CONTAINER_SELECTOR);
+    if (table) {
+      const owner = semantic || selectionSurface(element) || pageRoot();
+      const tables = Array.from(owner.querySelectorAll(TABLE_CONTAINER_SELECTOR)).filter(
+        (candidate) =>
+          candidate.closest(TABLE_CONTAINER_SELECTOR) === candidate,
+      );
+      const tableIndex = Math.max(0, tables.indexOf(table));
+      const row = element.matches?.(TABLE_ROW_SELECTOR)
+        ? element
+        : element.closest(TABLE_ROW_SELECTOR);
+      const cell = element.matches?.(TABLE_CELL_SELECTOR)
+        ? element
+        : element.closest(TABLE_CELL_SELECTOR);
+      let suffix = "table:" + tableIndex;
+      if (row) {
+        const rows = Array.from(table.querySelectorAll(TABLE_ROW_SELECTOR)).filter(
+          (candidate) =>
+            candidate.closest(TABLE_CONTAINER_SELECTOR) === table,
+        );
+        const rowIndex = Math.max(0, rows.indexOf(row));
+        suffix += ":row:" + rowIndex;
+        if (cell) {
+          const cells = Array.from(row.querySelectorAll(TABLE_CELL_SELECTOR)).filter(
+            (candidate) =>
+              candidate.closest(TABLE_ROW_SELECTOR) === row,
+          );
+          const cellIndex = Math.max(0, cells.indexOf(cell));
+          suffix += ":cell:" + cellIndex;
+        }
+      }
+      return base ? base + "|" + suffix : suffix;
+    }
+
     if (!semantic) return "";
     for (const name of ["data-message-id", "data-turn-id", "data-testid", "id"]) {
       const value = semantic.getAttribute(name);
@@ -254,6 +312,18 @@
     if (literal && literal.contains(range.endContainer)) {
       const pre = literal.closest("pre");
       return pre && pre.contains(range.endContainer) ? pre : literal;
+    }
+
+    const startCell = start.closest(TABLE_CELL_SELECTOR);
+    const endCell = end.closest(TABLE_CELL_SELECTOR);
+    if (startCell && endCell) {
+      if (startCell === endCell) return startCell;
+      const startRow = startCell.closest(TABLE_ROW_SELECTOR);
+      const endRow = endCell.closest(TABLE_ROW_SELECTOR);
+      if (startRow && startRow === endRow) return startRow;
+      const startTable = startCell.closest(TABLE_CONTAINER_SELECTOR);
+      const endTable = endCell.closest(TABLE_CONTAINER_SELECTOR);
+      if (startTable && startTable === endTable) return startTable;
     }
 
     const semantic = semanticScope(start);
@@ -280,6 +350,13 @@
       "SAMP",
       "KBD",
       "TT",
+      "TABLE",
+      "THEAD",
+      "TBODY",
+      "TFOOT",
+      "TR",
+      "TH",
+      "TD",
     ]);
     while (node && node !== surface.parentElement) {
       if (!node.contains(range.startContainer) || !node.contains(range.endContainer)) {
@@ -413,6 +490,8 @@
       for (const node of surface.querySelectorAll(
         "[data-message-id],[data-turn-id],[data-testid*='conversation-turn']," +
           "[data-testid*='message'],article,[role='article'],p,li,pre,code,samp,kbd,tt," +
+          "table,thead,tbody,tfoot,tr,th,td,[role='table'],[role='grid']," +
+          "[role='row'],[role='cell'],[role='gridcell'],[role='columnheader'],[role='rowheader']," +
           "blockquote,h1,h2,h3,h4,h5,h6",
       )) {
         add(node);

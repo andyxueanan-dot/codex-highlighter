@@ -23,6 +23,7 @@ A verified row has passed all of the following on a real Codex installation:
 - keep short-word anchors isolated when duplicate words appear later or inside editable composers;
 - display the palette without synchronously re-anchoring even when 120 resolved Ranges became stale;
 - persist selections inside clickable plain-text cards and syntax-highlighted code spanning multiple text nodes;
+- restore repeated table values to their original native-table or ARIA-grid cell after full table replacement;
 - add, recolor and delete all five colors;
 - show direct hover deletion and avoid the native selection menu;
 - export, import, search, delete and clear records in the native manager;

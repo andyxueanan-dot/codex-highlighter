@@ -125,6 +125,40 @@ function intersects(left, right) {
               <div>JavaScript</div>
               <pre><code id="syntax-code"><span>const </span><span>answer</span><span> = </span><span>42</span><span>;</span></code></pre>
             </div>
+            <div id="table-card" role="button">
+              <button id="table-copy" type="button">Copy table</button>
+              <table id="metrics-table">
+                <thead>
+                  <tr><th>模型</th><th>raw MAE</th><th>EMA MAE</th><th>初步结论</th></tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td id="metric-cell-a">A1: 全范围传递</td>
+                    <td id="metric-cell-raw"><span>raw </span><strong>1.236</strong></td>
+                    <td>1.641 <button id="cell-copy" type="button">Copy value</button></td>
+                    <td>公平基线</td>
+                  </tr>
+                  <tr>
+                    <td>B: 严格分圈</td><td>1.257</td><td>1.634</td>
+                    <td><span id="repeat-cell-1">0.1</span></td>
+                  </tr>
+                  <tr>
+                    <td>C: 分圈+注意力</td><td>1.253</td><td>1.637</td>
+                    <td><span id="repeat-cell-2">0.1</span></td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <div id="aria-grid" role="grid">
+              <div role="row">
+                <div role="columnheader">Model</div>
+                <div role="columnheader">Result</div>
+              </div>
+              <div role="row">
+                <div role="gridcell">Model B</div>
+                <div id="aria-cell" role="gridcell">strict grouping</div>
+              </div>
+            </div>
             <button id="real-control" type="button">Do not highlight this control</button>
           </article>
           <div id="short-anchor-zone"></div>
@@ -164,9 +198,27 @@ function intersects(left, right) {
         window.__CODEX_HIGHLIGHTER__.health().count === 2 &&
         window.__CODEX_HIGHLIGHTER__.health().resolved === 2,
     );
+    await selectTextByNeedle(page, "#metric-cell-a", "全范围传递");
+    await clickColor(page, "yellow");
+    await selectTextByNeedle(page, "#metric-cell-raw", "raw 1.236");
+    await clickColor(page, "green");
+    await selectTextByNeedle(page, "#repeat-cell-2", "0.1");
+    await clickColor(page, "purple");
+    await selectTextByNeedle(page, "#aria-cell", "strict grouping");
+    await clickColor(page, "cyan");
+    await page.waitForFunction(
+      () =>
+        window.__CODEX_HIGHLIGHTER__.health().count === 6 &&
+        window.__CODEX_HIGHLIGHTER__.health().resolved === 6,
+    );
     const literalData = await page.evaluate(() =>
       JSON.parse(window.__CODEX_HIGHLIGHTER__.exportData()).highlights.map(
-        (anchor) => ({ exact: anchor.exact, tag: anchor.scopeTag, color: anchor.color }),
+        (anchor) => ({
+          exact: anchor.exact,
+          tag: anchor.scopeTag,
+          color: anchor.color,
+          identity: anchor.scopeIdentity,
+        }),
       ),
     );
     if (
@@ -177,10 +229,50 @@ function intersects(left, right) {
       !literalData.some(
         (anchor) =>
           anchor.exact === "answer = 42" && anchor.tag === "PRE" && anchor.color === "pink",
+      ) ||
+      !literalData.some(
+        (anchor) =>
+          anchor.exact === "全范围传递" &&
+          anchor.tag === "TD" &&
+          anchor.color === "yellow",
+      ) ||
+      !literalData.some(
+        (anchor) =>
+          anchor.exact === "raw 1.236" &&
+          anchor.tag === "TD" &&
+          anchor.color === "green",
+      ) ||
+      !literalData.some(
+        (anchor) =>
+          anchor.exact === "0.1" &&
+          anchor.color === "purple" &&
+          /table:0:row:3:cell:3$/.test(anchor.identity),
+      ) ||
+      !literalData.some(
+        (anchor) =>
+          anchor.exact === "strict grouping" &&
+          anchor.tag === "DIV" &&
+          anchor.color === "cyan" &&
+          /table:1:row:1:cell:1$/.test(anchor.identity),
       )
     ) {
-      throw new Error(`Literal text anchors were not preserved: ${JSON.stringify(literalData)}`);
+      throw new Error(
+        "Structured text anchors were not preserved: " +
+          JSON.stringify(literalData),
+      );
     }
+    await page.evaluate(() => {
+      const table = document.querySelector("#metrics-table");
+      table.outerHTML = table.outerHTML;
+    });
+    await page.waitForFunction(() => {
+      const ranges = Array.from(
+        CSS.highlights.get("codex-study-highlight-purple") || [],
+      );
+      return ranges.some(
+        (range) => range.startContainer?.parentElement?.id === "repeat-cell-2",
+      );
+    });
     await page.evaluate(() => {
       const highlighter = window.__CODEX_HIGHLIGHTER__;
       const state = highlighter.syncState();
@@ -213,6 +305,26 @@ function intersects(left, right) {
     );
     if (controlToolbar !== "none") {
       throw new Error("A real button incorrectly opened the highlight palette");
+    }
+    await page.evaluate(() => {
+      const text = document.querySelector("#cell-copy").firstChild;
+      const range = document.createRange();
+      range.selectNodeContents(text);
+      const selection = getSelection();
+      selection.removeAllRanges();
+      selection.addRange(range);
+      document
+        .querySelector("#cell-copy")
+        .dispatchEvent(new PointerEvent("pointerup", { bubbles: true }));
+    });
+    await page.waitForTimeout(120);
+    const tableControlToolbar = await page.evaluate(
+      () =>
+        document.querySelector("#codex-highlighter-toolbar-host")?.style.display ||
+        "none",
+    );
+    if (tableControlToolbar !== "none") {
+      throw new Error("A real button inside a table incorrectly opened the palette");
     }
 
     await selectText(page, "#answer", 6, 16);

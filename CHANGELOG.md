@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.2.3 - 2026-08-28
+
+- Add highlighting support for native HTML tables and ARIA table/grid structures.
+- Recognize table, row, cell, gridcell, columnheader, and rowheader semantics.
+- Use the selected cell as the anchor, then promote to row or table for wider selections.
+- Allow table text inside clickable cards while keeping actual buttons and composers excluded.
+- Add table number, row number, and cell number to persistent identities so repeated values restore to the original cell.
+- Add regression coverage for headers, ordinary cells, multi-span cell content, repeated values, ARIA grids, copy buttons, and full table DOM replacement.
+
 ## 1.2.2 - 2026-08-28
 
 - Allow selections inside Codex plain-text and code cards even when their outer card is clickable.
