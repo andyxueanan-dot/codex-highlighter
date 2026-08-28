@@ -4,6 +4,7 @@ Last verified: 2026-08-28
 
 | Platform | Codex Desktop | Chromium | Status | Evidence |
 | --- | --- | --- | --- | --- |
+| Windows 11 Pro x64, build 26200 | `26.820.9563.0` | `151.0.7922.170` | ✅ Verified | v1.2.1 real-app palette latency was 5.2 ms with 173 stored highlights; selection did not increment the re-anchor count. |
 | Windows 11 Pro x64, build 26200 | `26.820.9563.0` | `151.0.7922.170` | ✅ Verified | Full v1.2.0 regression suite plus real 175-anchor idle sampling: host CPU reduced from 5.3% to 0.21%; 23 streaming mutation batches coalesced into one indexed pass with zero historical fallback anchors. |
 | Windows 11 Pro x64, build 26200 | `26.818.5229.0` | `151.0.7922.170` | ✅ Verified | Full launch, CDP injection, main transcript, side chat, five colors, persistence, recoloring, hover delete, data manager, installer and browser regression tests. |
 | Windows 10 x64 | Current Store build | Chromium with CSS Highlights API | 🟡 Expected, not yet verified | The host uses .NET Framework and Windows APIs available on Windows 10, but no end-to-end machine has been tested yet. |
@@ -20,6 +21,7 @@ A verified row has passed all of the following on a real Codex installation:
 - highlight main and side-chat transcript text;
 - persist and re-anchor highlights after DOM replacement;
 - keep short-word anchors isolated when duplicate words appear later or inside editable composers;
+- display the palette without synchronously re-anchoring even when 120 resolved Ranges became stale;
 - add, recolor and delete all five colors;
 - show direct hover deletion and avoid the native selection menu;
 - export, import, search, delete and clear records in the native manager;

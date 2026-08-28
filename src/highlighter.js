@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const VERSION = "1.2.0";
+  const VERSION = "1.2.1";
   const STATE_KEY = "__CODEX_HIGHLIGHTER__";
   const STORAGE_KEY = "codex-highlighter:data:v1";
   const STYLE_ID = "codex-highlighter-style";
@@ -53,6 +53,7 @@
   let hoverPointerX = 0;
   let hoverPointerY = 0;
   let pendingRange = null;
+  let toolbarRequestToken = 0;
   const surfaceObservers = new Map();
   let routeTimer = 0;
   let applyTimer = 0;
@@ -68,6 +69,8 @@
     lastCandidateScopes: 0,
     lastFallbackAnchors: 0,
     mutationBatches: 0,
+    lastToolbarMs: 0,
+    maxToolbarMs: 0,
   };
 
   function fnv1a(text) {
@@ -640,53 +643,11 @@
     }, delay);
   }
 
-  function rangesOverlap(left, right) {
-    try {
-      if (left.collapsed || right.collapsed) return false;
-      const leftElement = elementForNode(left.startContainer);
-      const rightElement = elementForNode(right.startContainer);
-      const root = selectionSurface(leftElement);
-      if (
-        !root ||
-        root !== selectionSurface(rightElement) ||
-        !root.contains(left.startContainer) ||
-        !root.contains(left.endContainer) ||
-        !root.contains(right.startContainer) ||
-        !root.contains(right.endContainer)
-      ) {
-        return false;
-      }
-      const leftStart = offsetWithin(root, left.startContainer, left.startOffset);
-      const leftEnd = offsetWithin(root, left.endContainer, left.endOffset);
-      const rightStart = offsetWithin(root, right.startContainer, right.startOffset);
-      const rightEnd = offsetWithin(root, right.endContainer, right.endOffset);
-      return (
-        leftStart >= 0 &&
-        rightStart >= 0 &&
-        leftStart < rightEnd &&
-        rightStart < leftEnd
-      );
-    } catch {
-      return false;
-    }
-  }
-
-  function overlappingIds(range) {
-    const ids = [];
-    for (const [id, resolved] of resolvedRanges) {
-      if (rangesOverlap(range, resolved)) ids.push(id);
-    }
-    return ids;
-  }
-
   function matchingAnchorIds(range) {
-    const overlapping = overlappingIds(range);
-    if (overlapping.length > 0) return overlapping;
     const probe = createAnchor(range);
     if (!probe) return [];
     return data.highlights
       .filter((anchor) => {
-        if (anchor.scopeHash !== probe.scopeHash) return false;
         if (
           anchor.contextKey &&
           probe.contextKey &&
@@ -694,20 +655,47 @@
         ) {
           return false;
         }
+        const identityMatches =
+          anchor.scopeIdentity &&
+          probe.scopeIdentity &&
+          anchor.scopeIdentity === probe.scopeIdentity;
+        const hashMatches = anchor.scopeHash === probe.scopeHash;
+        const anchorLead = normalizeContext(anchor.scopeLead);
+        const probeLead = normalizeContext(probe.scopeLead);
+        const anchorTail = normalizeContext(anchor.scopeTail);
+        const probeTail = normalizeContext(probe.scopeTail);
+        const scopeContextMatches =
+          (anchorLead.length >= 8 && anchorLead === probeLead) ||
+          (anchorTail.length >= 8 && anchorTail === probeTail);
+        if (!identityMatches && !hashMatches && !scopeContextMatches) {
+          return false;
+        }
         const offsetsOverlap =
           anchor.start < probe.end && probe.start < anchor.end;
         const quoteMatches =
           anchor.exact === probe.exact &&
-          anchor.prefix.slice(-64) === probe.prefix.slice(-64) &&
-          anchor.suffix.slice(0, 64) === probe.suffix.slice(0, 64);
+          normalizeContext(anchor.prefix).slice(-64) ===
+            normalizeContext(probe.prefix).slice(-64) &&
+          normalizeContext(anchor.suffix).slice(0, 64) ===
+            normalizeContext(probe.suffix).slice(0, 64);
         return offsetsOverlap || quoteMatches;
       })
       .map((anchor) => anchor.id);
   }
 
   function hideToolbar() {
+    toolbarRequestToken += 1;
     if (toolbarHost) toolbarHost.style.display = "none";
     pendingRange = null;
+  }
+
+  function resetToolbarMode() {
+    if (!toolbarHost || !deleteButton) return;
+    deleteButton.style.display = "none";
+    for (const button of colorButtons.values()) {
+      button.dataset.active = "false";
+    }
+    toolbarHost.style.width = "150px";
   }
 
   function updateToolbarMode(range) {
@@ -750,7 +738,14 @@
     return rects;
   }
 
-  function placeFloatingHost(host, anchorRect, width, height, preferBelow = true) {
+  function placeFloatingHost(
+    host,
+    anchorRect,
+    width,
+    height,
+    preferBelow = true,
+    avoidNativeMenus = true,
+  ) {
     const gap = 10;
     const margin = 8;
     const centeredLeft = anchorRect.left + anchorRect.width / 2 - width / 2;
@@ -766,7 +761,9 @@
           { left: centeredLeft, top: anchorRect.bottom + gap },
           { left: anchorRect.right + gap, top: anchorRect.top + anchorRect.height / 2 - height / 2 },
         ];
-    const obstacles = nearbyNativeMenuRects(anchorRect);
+    const obstacles = avoidNativeMenus
+      ? nearbyNativeMenuRects(anchorRect)
+      : [];
     let chosen = candidates[0];
     for (const candidate of candidates) {
       const bounded = {
@@ -787,22 +784,43 @@
     host.style.top = `${Math.round(chosen.top)}px`;
   }
 
-  function showToolbar(range) {
+  function showToolbar(range, startedAt = performance.now()) {
     ensureToolbar();
     pendingRange = range.cloneRange();
-    updateToolbarMode(pendingRange);
     const rects = Array.from(range.getClientRects()).filter(
       (rect) => rect.width > 0 && rect.height > 0,
     );
     const rect = rects.at(-1) || range.getBoundingClientRect();
     if (!rect || (!rect.width && !rect.height)) return hideToolbar();
+    const requestToken = ++toolbarRequestToken;
+    resetToolbarMode();
     toolbarHost.style.display = "block";
-    const width = updateToolbarMode(pendingRange);
     const height = 34;
-    placeFloatingHost(toolbarHost, rect, width, height, true);
+    placeFloatingHost(toolbarHost, rect, 150, height, true, false);
+    const elapsed = performance.now() - startedAt;
+    performanceStats.lastToolbarMs = Math.round(elapsed * 10) / 10;
+    performanceStats.maxToolbarMs = Math.max(
+      performanceStats.maxToolbarMs,
+      performanceStats.lastToolbarMs,
+    );
+    requestAnimationFrame(() => {
+      if (
+        requestToken !== toolbarRequestToken ||
+        toolbarHost?.style.display !== "block" ||
+        !pendingRange
+      ) {
+        return;
+      }
+      const width = updateToolbarMode(pendingRange);
+      placeFloatingHost(toolbarHost, rect, width, height, true, true);
+    });
     setTimeout(() => {
-      if (toolbarHost?.style.display === "block") {
-        placeFloatingHost(toolbarHost, rect, width, height, true);
+      if (
+        requestToken === toolbarRequestToken &&
+        toolbarHost?.style.display === "block"
+      ) {
+        const width = Number.parseInt(toolbarHost.style.width, 10) || 150;
+        placeFloatingHost(toolbarHost, rect, width, height, true, true);
       }
     }, 80);
   }
@@ -1046,7 +1064,7 @@
     (document.body || document.documentElement).appendChild(hoverHost);
   }
 
-  function captureSelection() {
+  function captureSelection(startedAt = performance.now()) {
     if (disposed) return;
     const selection = getSelection();
     if (!selection || selection.rangeCount === 0 || selection.isCollapsed) {
@@ -1058,32 +1076,14 @@
       hideToolbar();
       return;
     }
-    if (
-      Array.from(resolvedRanges.values()).some(
-        (resolved) =>
-          resolved.collapsed ||
-          !resolved.toString() ||
-          !resolved.startContainer?.isConnected ||
-          !resolved.endContainer?.isConnected,
-      )
-    ) {
-      if (applyTimer) {
-        clearTimeout(applyTimer);
-        applyTimer = 0;
-      }
-      if (applyIdleHandle && "cancelIdleCallback" in window) {
-        cancelIdleCallback(applyIdleHandle);
-        applyIdleHandle = 0;
-      }
-      applyHighlights();
-    }
     hideHoverToolbar();
-    showToolbar(range);
+    showToolbar(range, startedAt);
   }
 
   function onPointerUp(event) {
     if (toolbarHost?.contains(event.target) || hoverHost?.contains(event.target)) return;
-    setTimeout(captureSelection, 0);
+    const startedAt = performance.now();
+    setTimeout(() => captureSelection(startedAt), 0);
   }
 
   function onPointerMove(event) {

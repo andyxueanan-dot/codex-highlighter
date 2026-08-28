@@ -2,6 +2,7 @@
 
 const port = Number(process.argv[2] || 9460);
 const needle = process.argv[3] || "Codex Highlighter";
+const cleanupAfter = process.argv.includes("--cleanup");
 
 async function evaluate(target, expression) {
   return new Promise((resolve, reject) => {
@@ -77,11 +78,22 @@ async function evaluate(target, expression) {
           buttonTitle: button?.title || null,
           paletteColors,
           deleteDisplay: deleteButton?.style.display || null,
-          health: window.__CODEX_HIGHLIGHTER__?.health?.() || null
+          health: window.__CODEX_HIGHLIGHTER__?.health?.() || null,
+          diagnostics: window.__CODEX_HIGHLIGHTER__?.diagnostics?.() || null
         });
       }, 250);
     })`,
   );
+  if (cleanupAfter) {
+    await evaluate(
+      target,
+      `(() => {
+        getSelection()?.removeAllRanges();
+        document.body?.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }));
+        return true;
+      })()`,
+    );
+  }
   process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
 })().catch((error) => {
   process.stderr.write(`${error.stack || error}\n`);

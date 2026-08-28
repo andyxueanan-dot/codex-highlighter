@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.2.1 - 2026-08-28
+
+- Show the color palette immediately before checking whether the selection overlaps an existing highlight.
+- Move delete/recolor detection to the next animation frame.
+- Replace per-highlight full-document Range offset scans with one selection anchor and metadata comparisons.
+- Remove the emergency synchronous full re-anchor pass from text selection.
+- Reposition around Codex's native selection menu asynchronously after the palette is visible.
+- Add palette latency diagnostics.
+- Add a regression with 120 stale resolved ranges that requires palette display under 100 ms and forbids a synchronous re-anchor pass.
+
 ## 1.2.0 - 2026-08-28
 
 - Reduce healthy CDP monitoring from every 1.8 seconds to every 15 seconds.

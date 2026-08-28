@@ -86,6 +86,7 @@ function intersects(left, right) {
           <div id="short-anchor-zone"></div>
           <div id="duplicate-zone"></div>
           <div id="composer-zone" role="textbox" contenteditable="true"></div>
+          <div id="latency-zone"></div>
         </main>
         <aside id="side-chat">
           <article data-message-id="side-message-1">
@@ -192,6 +193,12 @@ function intersects(left, right) {
     }
 
     await selectText(page, "#answer", 6, 16);
+    await page.waitForFunction(
+      () =>
+        document
+          .querySelector("#codex-highlighter-toolbar-host")
+          ?.shadowRoot.querySelector("button.delete")?.style.display === "grid",
+    );
     const deleteState = await page.evaluate(() => ({
       display: document
         .querySelector("#codex-highlighter-toolbar-host")
@@ -369,6 +376,92 @@ function intersects(left, right) {
     if (editableToolbarDisplay !== "none") {
       throw new Error("Editable composer text incorrectly opened the highlight palette");
     }
+
+    const staleRangeBaseline = await page.evaluate(() => {
+      const fingerprint = (value) => {
+        const source = `${value.length}|${value.slice(0, 256)}|${value.slice(-256)}`;
+        let hash = 0x811c9dc5;
+        for (let index = 0; index < source.length; index += 1) {
+          hash ^= source.charCodeAt(index);
+          hash = Math.imul(hash, 0x01000193);
+        }
+        return (hash >>> 0).toString(16).padStart(8, "0");
+      };
+      const zone = document.querySelector("#latency-zone");
+      const highlights = [];
+      for (let index = 0; index < 120; index += 1) {
+        const text = `Context ${index} selected-token-${index} suffix`;
+        const element = document.createElement("p");
+        element.id = `latency-${index}`;
+        element.dataset.messageId = `latency-message-${index}`;
+        element.textContent = text;
+        zone.appendChild(element);
+        const exact = `selected-token-${index}`;
+        const start = text.indexOf(exact);
+        highlights.push({
+          id: `latency-anchor-${index}`,
+          contextKey: "about://blank",
+          scopeHash: fingerprint(text),
+          scopeIdentity: `data-message-id:latency-message-${index}`,
+          scopeTag: "P",
+          scopeLead: text,
+          scopeTail: text,
+          color: "yellow",
+          exact,
+          prefix: text.slice(0, start),
+          suffix: text.slice(start + exact.length),
+          start,
+          end: start + exact.length,
+          createdAt: Date.now() - index,
+        });
+      }
+      const highlighter = window.__CODEX_HIGHLIGHTER__;
+      const state = highlighter.syncState();
+      highlighter.importData({
+        version: 1,
+        revision: state.revision + 1,
+        updatedAt: Date.now(),
+        highlights,
+      });
+      return {
+        revision: state.revision + 1,
+        applyCount: highlighter.diagnostics().applyCount,
+      };
+    });
+    await page.waitForFunction(
+      (baseline) =>
+        window.__CODEX_HIGHLIGHTER__.syncState().revision === baseline.revision &&
+        window.__CODEX_HIGHLIGHTER__.health().resolved === 120 &&
+        window.__CODEX_HIGHLIGHTER__.diagnostics().applyCount > baseline.applyCount,
+      staleRangeBaseline,
+    );
+    const beforeStaleSelection = await page.evaluate(
+      () => window.__CODEX_HIGHLIGHTER__.diagnostics(),
+    );
+    await page.evaluate(() => {
+      document.querySelector("#latency-zone").replaceChildren();
+    });
+    await selectText(page, "#answer", 0, 5);
+    const staleSelectionState = await page.evaluate(() => ({
+      toolbarDisplay: document.querySelector("#codex-highlighter-toolbar-host")
+        ?.style.display,
+      diagnostics: window.__CODEX_HIGHLIGHTER__.diagnostics(),
+    }));
+    if (staleSelectionState.toolbarDisplay !== "block") {
+      throw new Error("Palette did not appear with stale resolved ranges");
+    }
+    if (staleSelectionState.diagnostics.lastToolbarMs > 100) {
+      throw new Error(
+        `Palette latency exceeded 100ms: ${JSON.stringify(staleSelectionState)}`,
+      );
+    }
+    if (
+      staleSelectionState.diagnostics.applyCount !==
+      beforeStaleSelection.applyCount
+    ) {
+      throw new Error("Selection synchronously triggered a full re-anchor pass");
+    }
+    await page.keyboard.press("Escape");
 
     const performanceBaseline = await page.evaluate(() => {
       const highlighter = window.__CODEX_HIGHLIGHTER__;
