@@ -1,5 +1,21 @@
 # Changelog
 
+## 1.2.0 - 2026-08-28
+
+- Reduce healthy CDP monitoring from every 1.8 seconds to every 15 seconds.
+- Use fast 5-second checks only while disconnected or waiting for Codex.
+- Collapse version, revision, timestamp, and count checks into one lightweight renderer call.
+- Import or export JSON only when the revision changed; unchanged data is no longer transferred.
+- Inject only the main Codex renderer and skip the avatar overlay window.
+- Cache renderer targets and inject only when a target is new or its runtime version changed.
+- Observe transcript surfaces instead of the entire document.
+- Debounce streaming DOM mutations for one second and schedule re-anchoring during browser idle time.
+- Build scope hash and semantic-identity indexes before matching anchors.
+- Limit expensive fallback matching to the initial load and anchors previously resolved on screen.
+- Remove synchronous full re-anchoring from ordinary text selection.
+- Throttle hover hit-testing to once every 80 ms.
+- Add renderer diagnostics and a 600-anchor / 25-mutation performance regression test.
+
 ## 1.1.2 - 2026-08-27
 
 - Start the tray host automatically for the current Windows user after installation.

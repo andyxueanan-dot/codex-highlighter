@@ -16,8 +16,8 @@ using System.Windows.Forms;
 [assembly: AssemblyTitle("Codex Highlighter")]
 [assembly: AssemblyDescription("Persistent yellow text highlighting for the Codex desktop transcript")]
 [assembly: AssemblyProduct("Codex Highlighter")]
-[assembly: AssemblyVersion("1.1.2.0")]
-[assembly: AssemblyFileVersion("1.1.2.0")]
+[assembly: AssemblyVersion("1.2.0.0")]
+[assembly: AssemblyFileVersion("1.2.0.0")]
 
 namespace CodexHighlighter
 {
@@ -343,14 +343,18 @@ namespace CodexHighlighter
 
     internal sealed class HighlighterHost : IDisposable
     {
-        private const string Version = "1.1.2";
+        private const string Version = "1.2.0";
         private const int DefaultPort = 9460;
+        private const int HealthyMonitorInterval = 15000;
+        private const int DisconnectedMonitorInterval = 5000;
         private readonly object statusGate = new object();
         private readonly CdpClient cdp = new CdpClient();
         private readonly HighlightDataStore store = new HighlightDataStore();
+        private readonly HashSet<string> initializedTargets = new HashSet<string>(StringComparer.Ordinal);
         private readonly string injectorScript;
         private System.Threading.Timer monitorTimer;
         private int monitorBusy;
+        private int immediateMonitorRequested;
         private int monitorAttempts;
         private int consecutiveFailures;
         private int recoveryBusy;
@@ -564,17 +568,40 @@ namespace CodexHighlighter
             Log.Write("Starting renderer monitor on CDP port " + port);
             if (monitorTimer == null)
             {
-                monitorTimer = new System.Threading.Timer(MonitorTick, null, 0, 1800);
+                monitorTimer = new System.Threading.Timer(
+                    MonitorTick, null, 0, Timeout.Infinite);
             }
             else
             {
-                monitorTimer.Change(0, 1800);
+                monitorTimer.Change(0, Timeout.Infinite);
             }
         }
 
         internal void MonitorNow()
         {
-            MonitorTick(null);
+            if (disposed || monitorTimer == null) return;
+            Interlocked.Exchange(ref immediateMonitorRequested, 1);
+            if (Interlocked.CompareExchange(ref monitorBusy, 0, 0) == 0)
+            {
+                monitorTimer.Change(0, Timeout.Infinite);
+            }
+        }
+
+        private void ScheduleNextMonitor()
+        {
+            if (disposed || monitorTimer == null) return;
+            int delay = Interlocked.Exchange(ref immediateMonitorRequested, 0) != 0
+                ? 0
+                : IsConnected
+                    ? HealthyMonitorInterval
+                    : DisconnectedMonitorInterval;
+            try
+            {
+                monitorTimer.Change(delay, Timeout.Infinite);
+            }
+            catch (ObjectDisposedException)
+            {
+            }
         }
 
         private void MonitorTick(object state)
@@ -597,8 +624,7 @@ namespace CodexHighlighter
                 List<CdpTarget> targets = cdp.GetTargets(port);
                 targets.RemoveAll(delegate(CdpTarget target)
                 {
-                    return !(target.Url.StartsWith("app://", StringComparison.OrdinalIgnoreCase) ||
-                        target.Title.IndexOf("Codex", StringComparison.OrdinalIgnoreCase) >= 0);
+                    return !IsMainRendererTarget(target);
                 });
                 if (targets.Count == 0)
                 {
@@ -608,32 +634,52 @@ namespace CodexHighlighter
                 if (attempt <= 3) Log.Write("Monitor found " + targets.Count + " Codex renderer target(s)");
 
                 string bestData = store.Load();
+                DataStamp bestStamp = HighlightDataStore.Stamp(bestData);
+                HashSet<string> liveTargetIds = new HashSet<string>(StringComparer.Ordinal);
                 foreach (CdpTarget target in targets)
                 {
-                    if (attempt <= 3) Log.Write("Checking renderer " + target.Id + " " + target.Url);
-                    object installedValue = cdp.Evaluate(target,
-                        "window.__CODEX_HIGHLIGHTER__ && window.__CODEX_HIGHLIGHTER__.version");
-                    string installed = installedValue as string;
-                    if (!string.Equals(installed, Version, StringComparison.Ordinal))
+                    liveTargetIds.Add(target.Id);
+                    bool isNewTarget = !initializedTargets.Contains(target.Id);
+                    if (attempt <= 3 || isNewTarget)
                     {
-                        if (attempt <= 3) Log.Write("Injecting highlighter into renderer " + target.Id);
-                        cdp.Evaluate(target, injectorScript);
+                        Log.Write("Checking renderer " + target.Id + " " + target.Url);
                     }
 
-                    if (!string.IsNullOrEmpty(bestData))
+                    RendererSyncState renderer = ReadRendererSyncState(target);
+                    if (renderer == null || !string.Equals(renderer.Version, Version, StringComparison.Ordinal))
+                    {
+                        Log.Write("Injecting highlighter into renderer " + target.Id);
+                        cdp.Evaluate(target, injectorScript);
+                        renderer = ReadRendererSyncState(target);
+                    }
+                    if (renderer == null)
+                    {
+                        throw new InvalidOperationException(
+                            "Highlighter renderer state was unavailable after injection.");
+                    }
+
+                    if (bestStamp.Valid && IsFileNewer(bestStamp, renderer))
                     {
                         string quoted = Json.CreateSerializer().Serialize(bestData);
                         cdp.Evaluate(target,
-                            "window.__CODEX_HIGHLIGHTER__ && " +
-                            "window.__CODEX_HIGHLIGHTER__.importData(" + quoted + ")");
+                            "window.__CODEX_HIGHLIGHTER__?.importData(" + quoted + ")");
+                        renderer = ReadRendererSyncState(target) ?? renderer;
                     }
-
-                    object exportedValue = cdp.Evaluate(target,
-                        "window.__CODEX_HIGHLIGHTER__ ? " +
-                        "window.__CODEX_HIGHLIGHTER__.exportData() : ''");
-                    string exported = exportedValue as string;
-                    bestData = store.Newer(bestData, exported);
+                    else if (!bestStamp.Valid || IsRendererNewer(renderer, bestStamp))
+                    {
+                        object exportedValue = cdp.Evaluate(target,
+                            "window.__CODEX_HIGHLIGHTER__?.exportData?.() || ''");
+                        string exported = exportedValue as string;
+                        string newer = store.Newer(bestData, exported);
+                        if (!string.Equals(newer, bestData, StringComparison.Ordinal))
+                        {
+                            bestData = newer;
+                            bestStamp = HighlightDataStore.Stamp(bestData);
+                        }
+                    }
+                    initializedTargets.Add(target.Id);
                 }
+                initializedTargets.IntersectWith(liveTargetIds);
 
                 if (!string.IsNullOrEmpty(bestData)) store.SaveIfNewer(bestData);
                 int count = store.Count(bestData);
@@ -648,7 +694,59 @@ namespace CodexHighlighter
             finally
             {
                 Interlocked.Exchange(ref monitorBusy, 0);
+                ScheduleNextMonitor();
             }
+        }
+
+        private static bool IsMainRendererTarget(CdpTarget target)
+        {
+            if (target == null || string.IsNullOrEmpty(target.Url)) return false;
+            if (!target.Url.StartsWith("app://", StringComparison.OrdinalIgnoreCase)) return false;
+            return target.Url.IndexOf("initialRoute=%2Favatar-overlay",
+                StringComparison.OrdinalIgnoreCase) < 0 &&
+                target.Url.IndexOf("initialRoute=/avatar-overlay",
+                StringComparison.OrdinalIgnoreCase) < 0;
+        }
+
+        private RendererSyncState ReadRendererSyncState(CdpTarget target)
+        {
+            object raw = cdp.Evaluate(target,
+                "window.__CODEX_HIGHLIGHTER__?.syncState?.() || null");
+            Dictionary<string, object> value = raw as Dictionary<string, object>;
+            if (value == null) return null;
+            try
+            {
+                RendererSyncState state = new RendererSyncState();
+                state.Version = value.ContainsKey("version")
+                    ? Convert.ToString(value["version"])
+                    : string.Empty;
+                state.Revision = value.ContainsKey("revision")
+                    ? Convert.ToInt64(value["revision"])
+                    : 0;
+                state.UpdatedAt = value.ContainsKey("updatedAt")
+                    ? Convert.ToInt64(value["updatedAt"])
+                    : 0;
+                state.Count = value.ContainsKey("count")
+                    ? Convert.ToInt32(value["count"])
+                    : 0;
+                return state;
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private static bool IsFileNewer(DataStamp file, RendererSyncState renderer)
+        {
+            return file.UpdatedAt > renderer.UpdatedAt ||
+                file.UpdatedAt == renderer.UpdatedAt && file.Revision > renderer.Revision;
+        }
+
+        private static bool IsRendererNewer(RendererSyncState renderer, DataStamp file)
+        {
+            return renderer.UpdatedAt > file.UpdatedAt ||
+                renderer.UpdatedAt == file.UpdatedAt && renderer.Revision > file.Revision;
         }
 
         private void HandleMonitorFailure(Exception exception)
@@ -695,8 +793,10 @@ namespace CodexHighlighter
                 SavePort(port);
                 consecutiveFailures = 0;
                 monitorAttempts = 0;
+                initializedTargets.Clear();
                 SetStatus("自动恢复成功，正在注入", true, false);
                 Log.Write("Codex automatic recovery succeeded on port " + port);
+                Interlocked.Exchange(ref immediateMonitorRequested, 1);
             }
             catch (Exception recoveryException)
             {
@@ -719,8 +819,7 @@ namespace CodexHighlighter
             }
             foreach (CdpTarget target in cdp.GetTargets(port))
             {
-                if (!(target.Url.StartsWith("app://", StringComparison.OrdinalIgnoreCase) ||
-                    target.Title.IndexOf("Codex", StringComparison.OrdinalIgnoreCase) >= 0)) continue;
+                if (!IsMainRendererTarget(target)) continue;
                 try
                 {
                     cdp.Evaluate(target,
@@ -730,6 +829,7 @@ namespace CodexHighlighter
                 {
                 }
                 cdp.Evaluate(target, injectorScript);
+                initializedTargets.Add(target.Id);
             }
             MonitorNow();
         }
@@ -771,8 +871,7 @@ namespace CodexHighlighter
                 {
                     foreach (CdpTarget target in cdp.GetTargets(port))
                     {
-                        if (!(target.Url.StartsWith("app://", StringComparison.OrdinalIgnoreCase) ||
-                            target.Title.IndexOf("Codex", StringComparison.OrdinalIgnoreCase) >= 0))
+                        if (!IsMainRendererTarget(target))
                         {
                             continue;
                         }
@@ -1042,6 +1141,14 @@ namespace CodexHighlighter
         internal string Title;
         internal string Url;
         internal string WebSocketUrl;
+    }
+
+    internal sealed class RendererSyncState
+    {
+        internal string Version;
+        internal long Revision;
+        internal long UpdatedAt;
+        internal int Count;
     }
 
     internal sealed class CdpClient

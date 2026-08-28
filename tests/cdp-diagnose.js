@@ -50,6 +50,8 @@ async function evaluate(target, expression) {
         title: document.title,
         readyState: document.readyState,
         highlighter: window.__CODEX_HIGHLIGHTER__?.health?.() || null,
+        highlighterDiagnostics:
+          window.__CODEX_HIGHLIGHTER__?.diagnostics?.() || null,
         mainElements: document.querySelectorAll('main').length,
         roleMainElements: document.querySelectorAll('[role="main"]').length,
         bodyTextLength: (document.body?.innerText || '').length,

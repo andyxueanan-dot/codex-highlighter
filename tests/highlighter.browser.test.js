@@ -192,13 +192,35 @@ function intersects(left, right) {
     }
 
     await selectText(page, "#answer", 6, 16);
-    const deleteVisible = await page.evaluate(() =>
-      document
+    const deleteState = await page.evaluate(() => ({
+      display: document
         .querySelector("#codex-highlighter-toolbar-host")
         .shadowRoot.querySelector("button.delete").style.display,
-    );
-    if (deleteVisible !== "grid") {
-      throw new Error("Existing highlight did not expose the selection delete button");
+      selection: getSelection().toString(),
+      health: window.__CODEX_HIGHLIGHTER__.health(),
+      diagnostics: window.__CODEX_HIGHLIGHTER__.diagnostics(),
+      range: (() => {
+        const resolved = Array.from(
+          CSS.highlights.get("codex-study-highlight-yellow") || [],
+        )[0];
+        const selected = getSelection().rangeCount
+          ? getSelection().getRangeAt(0)
+          : null;
+        return {
+          resolvedText: resolved?.toString() || "",
+          resolvedConnected: Boolean(resolved?.startContainer?.isConnected),
+          sameStartNode: Boolean(
+            resolved && selected && resolved.startContainer === selected.startContainer,
+          ),
+          resolvedStart: resolved?.startOffset ?? -1,
+          selectedStart: selected?.startOffset ?? -1,
+        };
+      })(),
+    }));
+    if (deleteState.display !== "grid") {
+      throw new Error(
+        `Existing highlight did not expose delete: ${JSON.stringify(deleteState)}`,
+      );
     }
     await clickSelectionDelete(page);
     await page.waitForFunction(
@@ -348,8 +370,75 @@ function intersects(left, right) {
       throw new Error("Editable composer text incorrectly opened the highlight palette");
     }
 
+    const performanceBaseline = await page.evaluate(() => {
+      const highlighter = window.__CODEX_HIGHLIGHTER__;
+      const current = highlighter.syncState();
+      const applyCount = highlighter.diagnostics().applyCount;
+      const highlights = Array.from({ length: 600 }, (_, index) => ({
+        id: `historical-${index}`,
+        contextKey: "about://blank",
+        scopeHash: `missing-${index}`,
+        scopeIdentity: `data-message-id:historical-${index}`,
+        scopeTag: "P",
+        scopeLead: `Historical record ${index}`,
+        scopeTail: `Historical record ${index}`,
+        color: "yellow",
+        exact: `historical-token-${index}`,
+        prefix: "before ",
+        suffix: " after",
+        start: 7,
+        end: 27,
+        createdAt: Date.now() - index,
+      }));
+      highlighter.importData({
+        version: 1,
+        revision: current.revision + 1,
+        updatedAt: Date.now(),
+        highlights,
+      });
+      return { revision: current.revision + 1, applyCount };
+    });
+    await page.waitForFunction(
+      (baseline) =>
+        window.__CODEX_HIGHLIGHTER__.syncState().revision === baseline.revision &&
+        window.__CODEX_HIGHLIGHTER__.diagnostics().applyCount > baseline.applyCount,
+      performanceBaseline,
+    );
+    const beforeMutations = await page.evaluate(
+      () => window.__CODEX_HIGHLIGHTER__.diagnostics(),
+    );
+    await page.evaluate(() => {
+      const answer = document.querySelector("#answer");
+      for (let index = 0; index < 25; index += 1) {
+        answer.textContent = `Alpha beta gamma delta. Stream update ${index}.`;
+      }
+    });
+    await page.waitForFunction(
+      (applyCount) =>
+        window.__CODEX_HIGHLIGHTER__.diagnostics().applyCount > applyCount,
+      beforeMutations.applyCount,
+    );
+    await page.waitForTimeout(1200);
+    const afterMutations = await page.evaluate(
+      () => window.__CODEX_HIGHLIGHTER__.diagnostics(),
+    );
+    const applyDelta = afterMutations.applyCount - beforeMutations.applyCount;
+    if (applyDelta !== 1) {
+      throw new Error(`Mutation burst caused ${applyDelta} re-anchor passes`);
+    }
+    if (afterMutations.lastFallbackAnchors !== 0) {
+      throw new Error(
+        `Historical anchors triggered ${afterMutations.lastFallbackAnchors} fallback scans`,
+      );
+    }
+    if (afterMutations.lastApplyMs > 250) {
+      throw new Error(
+        `Indexed re-anchor exceeded 250ms: ${JSON.stringify(afterMutations)}`,
+      );
+    }
+
     process.stdout.write(
-      "PASS browser-multi-surface-palette-reanchor-hover-delete-short-anchor-isolation\n",
+      "PASS browser-features-short-anchor-isolation-indexed-performance\n",
     );
   } finally {
     await browser.close();

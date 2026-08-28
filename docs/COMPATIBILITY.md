@@ -1,9 +1,10 @@
 # Compatibility matrix
 
-Last verified: 2026-08-27
+Last verified: 2026-08-28
 
 | Platform | Codex Desktop | Chromium | Status | Evidence |
 | --- | --- | --- | --- | --- |
+| Windows 11 Pro x64, build 26200 | `26.820.9563.0` | `151.0.7922.170` | ✅ Verified | Full v1.2.0 regression suite plus real 175-anchor idle sampling: host CPU reduced from 5.3% to 0.21%; 23 streaming mutation batches coalesced into one indexed pass with zero historical fallback anchors. |
 | Windows 11 Pro x64, build 26200 | `26.818.5229.0` | `151.0.7922.170` | ✅ Verified | Full launch, CDP injection, main transcript, side chat, five colors, persistence, recoloring, hover delete, data manager, installer and browser regression tests. |
 | Windows 10 x64 | Current Store build | Chromium with CSS Highlights API | 🟡 Expected, not yet verified | The host uses .NET Framework and Windows APIs available on Windows 10, but no end-to-end machine has been tested yet. |
 | macOS | Any | Any | ❌ Unsupported | The native launcher, process discovery, installer and tray workflow are Windows-specific. |
@@ -22,7 +23,7 @@ A verified row has passed all of the following on a real Codex installation:
 - add, recolor and delete all five colors;
 - show direct hover deletion and avoid the native selection menu;
 - export, import, search, delete and clear records in the native manager;
-- install, update, preserve data, uninstall and purge in a temporary user directory.
+- install, update, preserve data, uninstall and purge in a temporary user directory;
 - start from the current-user Windows Startup folder, wait for Codex, and automatically recover a normally launched Codex session.
 
 ## Codex update policy

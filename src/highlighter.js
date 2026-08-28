@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const VERSION = "1.1.2";
+  const VERSION = "1.2.0";
   const STATE_KEY = "__CODEX_HIGHLIGHTER__";
   const STORAGE_KEY = "codex-highlighter:data:v1";
   const STYLE_ID = "codex-highlighter-style";
@@ -49,14 +49,26 @@
   let hoverDeleteButton = null;
   let hoverAnchorId = null;
   let hoverHideTimer = 0;
-  let hoverMoveFrame = 0;
+  let hoverMoveTimer = 0;
+  let hoverPointerX = 0;
+  let hoverPointerY = 0;
   let pendingRange = null;
-  let observer = null;
+  const surfaceObservers = new Map();
   let routeTimer = 0;
   let applyTimer = 0;
+  let applyIdleHandle = 0;
   let lastContextKey = "";
+  let initialFullScan = true;
   let disposed = false;
   const resolvedRanges = new Map();
+  const performanceStats = {
+    applyCount: 0,
+    lastApplyMs: 0,
+    maxApplyMs: 0,
+    lastCandidateScopes: 0,
+    lastFallbackAnchors: 0,
+    mutationBatches: 0,
+  };
 
   function fnv1a(text) {
     let hash = 0x811c9dc5;
@@ -100,6 +112,7 @@
         `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`,
       contextKey: safeString(value.contextKey, 1000),
       scopeHash: safeString(value.scopeHash, 64),
+      scopeIdentity: safeString(value.scopeIdentity, 256),
       scopeTag: safeString(value.scopeTag, 32),
       scopeLead: safeString(value.scopeLead, 128),
       scopeTail: safeString(value.scopeTail, 128),
@@ -201,6 +214,19 @@
     );
   }
 
+  function scopeIdentity(element) {
+    const semantic = element?.closest?.(
+      "[data-message-id],[data-turn-id],[data-testid*='conversation-turn']," +
+        "[data-testid*='message'],article,[role='article']",
+    );
+    if (!semantic) return "";
+    for (const name of ["data-message-id", "data-turn-id", "data-testid", "id"]) {
+      const value = semantic.getAttribute(name);
+      if (value) return `${name}:${value}`;
+    }
+    return "";
+  }
+
   function chooseScope(range) {
     const start = elementForNode(range.startContainer);
     const end = elementForNode(range.endContainer);
@@ -280,6 +306,7 @@
       id: `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`,
       contextKey: contextKey(),
       scopeHash: fingerprint(scopeText),
+      scopeIdentity: scopeIdentity(scope),
       scopeTag: scope.tagName || "",
       scopeLead: scopeText.slice(0, 96),
       scopeTail: scopeText.slice(-96),
@@ -344,8 +371,8 @@
   }
 
   function candidateScopes() {
-    const root = pageRoot();
-    if (!root) return [];
+    const surfaces = transcriptSurfaces();
+    if (surfaces.length === 0) return [];
     const result = [];
     const seen = new Set();
     const add = (node) => {
@@ -353,22 +380,48 @@
       if (node.matches?.(EDITABLE_SELECTOR) || node.closest?.(EDITABLE_SELECTOR)) {
         return;
       }
-      const length = scopedText(node).length;
+      const length = (node.textContent || "").length;
       if (!length || length > 50000) return;
       seen.add(node);
       result.push(node);
     };
-    for (const node of root.querySelectorAll(
-      "[data-message-id],[data-turn-id],[data-testid*='conversation-turn']," +
-        "[data-testid*='message'],[data-side-chat],[data-testid*='side-chat']," +
-        "[data-testid*='sidecar'],article,[role='article'],p,li,pre," +
-        "blockquote,h1,h2,h3,h4,h5,h6",
-    )) {
-      add(node);
+    for (const surface of surfaces) {
+      for (const node of surface.querySelectorAll(
+        "[data-message-id],[data-turn-id],[data-testid*='conversation-turn']," +
+          "[data-testid*='message'],article,[role='article'],p,li,pre," +
+          "blockquote,h1,h2,h3,h4,h5,h6",
+      )) {
+        add(node);
+        if (result.length >= 2000) break;
+      }
+      add(surface);
       if (result.length >= 2000) break;
     }
-    for (const surface of root.querySelectorAll("main,aside")) add(surface);
     return result;
+  }
+
+  function buildScopeIndex() {
+    const records = [];
+    const byHash = new Map();
+    const byIdentity = new Map();
+    for (const scope of candidateScopes()) {
+      const text = scopedText(scope);
+      if (!text) continue;
+      const record = {
+        scope,
+        text,
+        hash: fingerprint(text),
+        identity: scopeIdentity(scope),
+      };
+      records.push(record);
+      if (!byHash.has(record.hash)) byHash.set(record.hash, []);
+      byHash.get(record.hash).push(record);
+      if (record.identity) {
+        if (!byIdentity.has(record.identity)) byIdentity.set(record.identity, []);
+        byIdentity.get(record.identity).push(record);
+      }
+    }
+    return { records, byHash, byIdentity };
   }
 
   function occurrences(text, exact, limit = 24) {
@@ -455,7 +508,7 @@
     );
   }
 
-  function anchorToRange(anchor, scopes) {
+  function anchorToRange(anchor, index, allowFallback) {
     const currentContext = contextKey();
     if (
       anchor.contextKey &&
@@ -465,10 +518,31 @@
       return null;
     }
     let best = null;
-    for (const scope of scopes || candidateScopes()) {
-      const text = scopedText(scope);
+    const candidates = [];
+    const seen = new Set();
+    const addRecords = (records) => {
+      for (const record of records || []) {
+        if (seen.has(record.scope)) continue;
+        seen.add(record.scope);
+        candidates.push(record);
+      }
+    };
+    if (anchor.scopeIdentity) addRecords(index.byIdentity.get(anchor.scopeIdentity));
+    addRecords(index.byHash.get(anchor.scopeHash));
+    if (allowFallback) {
+      addRecords(
+        index.records.filter(
+          (record) =>
+            !anchor.scopeTag || record.scope.tagName === anchor.scopeTag,
+        ),
+      );
+    }
+
+    for (const record of candidates) {
+      const scope = record.scope;
+      const text = record.text;
       if (text.length < anchor.exact.length) continue;
-      const hashMatches = fingerprint(text) === anchor.scopeHash;
+      const hashMatches = record.hash === anchor.scopeHash;
       for (const start of occurrences(text, anchor.exact)) {
         const end = start + anchor.exact.length;
         if (!hasReliableContext(anchor, text, start, end, hashMatches)) {
@@ -514,15 +588,21 @@
 
   function applyHighlights() {
     applyTimer = 0;
+    applyIdleHandle = 0;
     if (disposed || !supportsHighlights) return;
+    const started = performance.now();
     ensureStyle();
     const groups = new Map(
       Object.keys(COLORS).map((name) => [name, new Highlight()]),
     );
-    const scopes = candidateScopes();
+    const index = buildScopeIndex();
+    const previouslyResolved = new Set(resolvedRanges.keys());
     resolvedRanges.clear();
+    let fallbackAnchors = 0;
     for (const anchor of data.highlights) {
-      const range = anchorToRange(anchor, scopes);
+      const allowFallback = initialFullScan || previouslyResolved.has(anchor.id);
+      if (allowFallback) fallbackAnchors += 1;
+      const range = anchorToRange(anchor, index, allowFallback);
       if (!range) continue;
       groups.get(anchor.color || "yellow").add(range);
       resolvedRanges.set(anchor.id, range);
@@ -531,12 +611,33 @@
     for (const [name, group] of groups) {
       CSS.highlights.set(`${HIGHLIGHT_PREFIX}-${name}`, group);
     }
+    initialFullScan = false;
+    const elapsed = performance.now() - started;
+    performanceStats.applyCount += 1;
+    performanceStats.lastApplyMs = Math.round(elapsed * 10) / 10;
+    performanceStats.maxApplyMs = Math.max(
+      performanceStats.maxApplyMs,
+      performanceStats.lastApplyMs,
+    );
+    performanceStats.lastCandidateScopes = index.records.length;
+    performanceStats.lastFallbackAnchors = fallbackAnchors;
   }
 
-  function scheduleApply(delay = 180) {
+  function scheduleApply(delay = 1000) {
     if (disposed) return;
     if (applyTimer) clearTimeout(applyTimer);
-    applyTimer = setTimeout(applyHighlights, delay);
+    if (applyIdleHandle && "cancelIdleCallback" in window) {
+      cancelIdleCallback(applyIdleHandle);
+      applyIdleHandle = 0;
+    }
+    applyTimer = setTimeout(() => {
+      applyTimer = 0;
+      if (delay === 0 || !("requestIdleCallback" in window)) {
+        applyHighlights();
+        return;
+      }
+      applyIdleHandle = requestIdleCallback(applyHighlights, { timeout: 2000 });
+    }, delay);
   }
 
   function rangesOverlap(left, right) {
@@ -957,11 +1058,25 @@
       hideToolbar();
       return;
     }
-    if (applyTimer) {
-      clearTimeout(applyTimer);
-      applyTimer = 0;
+    if (
+      Array.from(resolvedRanges.values()).some(
+        (resolved) =>
+          resolved.collapsed ||
+          !resolved.toString() ||
+          !resolved.startContainer?.isConnected ||
+          !resolved.endContainer?.isConnected,
+      )
+    ) {
+      if (applyTimer) {
+        clearTimeout(applyTimer);
+        applyTimer = 0;
+      }
+      if (applyIdleHandle && "cancelIdleCallback" in window) {
+        cancelIdleCallback(applyIdleHandle);
+        applyIdleHandle = 0;
+      }
+      applyHighlights();
     }
-    applyHighlights();
     hideHoverToolbar();
     showToolbar(range);
   }
@@ -986,13 +1101,15 @@
     }
     const x = event.clientX;
     const y = event.clientY;
-    if (hoverMoveFrame) cancelAnimationFrame(hoverMoveFrame);
-    hoverMoveFrame = requestAnimationFrame(() => {
-      hoverMoveFrame = 0;
-      const hit = anchorAtPoint(x, y);
+    hoverPointerX = x;
+    hoverPointerY = y;
+    if (hoverMoveTimer) return;
+    hoverMoveTimer = setTimeout(() => {
+      hoverMoveTimer = 0;
+      const hit = anchorAtPoint(hoverPointerX, hoverPointerY);
       if (hit) showHoverToolbar(hit.id, hit.rect);
       else scheduleHideHoverToolbar();
-    });
+    }, 80);
   }
 
   function onKeyDown(event) {
@@ -1042,6 +1159,7 @@
     ensureStyle();
     ensureToolbar();
     ensureHoverToolbar();
+    refreshSurfaceObservers();
     scheduleApply(0);
     return true;
   }
@@ -1057,17 +1175,99 @@
     };
   }
 
+  function syncState() {
+    return {
+      version: VERSION,
+      revision: data.revision,
+      updatedAt: data.updatedAt,
+      count: data.highlights.length,
+    };
+  }
+
+  function diagnostics() {
+    return {
+      ...health(),
+      ...performanceStats,
+      observedSurfaces: surfaceObservers.size,
+    };
+  }
+
+  function transcriptSurfaces() {
+    const root = pageRoot();
+    if (!root) return [];
+    const candidates = Array.from(
+      root.querySelectorAll(
+        "main,aside,[data-side-chat],[data-testid*='side-chat']," +
+          "[data-testid*='sidecar']",
+      ),
+    ).filter(
+      (node) =>
+        !node.matches(EDITABLE_SELECTOR) &&
+        !node.closest(`#${TOOLBAR_HOST_ID},#${HOVER_HOST_ID}`),
+    );
+    return candidates.filter(
+      (node) =>
+        !candidates.some(
+          (other) => other !== node && other.contains(node),
+        ),
+    );
+  }
+
+  function mutationIsRelevant(record) {
+    const element = elementForNode(record.target);
+    if (!element) return false;
+    if (
+      element.closest(
+        `${EDITABLE_SELECTOR},#${TOOLBAR_HOST_ID},#${HOVER_HOST_ID}`,
+      )
+    ) {
+      return false;
+    }
+    return record.type === "childList" || record.type === "characterData";
+  }
+
+  function onTranscriptMutations(records) {
+    if (!records.some(mutationIsRelevant)) return;
+    performanceStats.mutationBatches += 1;
+    scheduleApply();
+  }
+
+  function refreshSurfaceObservers() {
+    const surfaces = new Set(transcriptSurfaces());
+    for (const [surface, surfaceObserver] of surfaceObservers) {
+      if (surfaces.has(surface) && surface.isConnected) continue;
+      surfaceObserver.disconnect();
+      surfaceObservers.delete(surface);
+    }
+    for (const surface of surfaces) {
+      if (surfaceObservers.has(surface)) continue;
+      const surfaceObserver = new MutationObserver(onTranscriptMutations);
+      surfaceObserver.observe(surface, {
+        childList: true,
+        subtree: true,
+        characterData: true,
+      });
+      surfaceObservers.set(surface, surfaceObserver);
+    }
+  }
+
   function cleanup() {
     if (disposed) return true;
     disposed = true;
     document.removeEventListener("pointerup", onPointerUp, true);
     document.removeEventListener("pointermove", onPointerMove, true);
     document.removeEventListener("keydown", onKeyDown, true);
-    observer?.disconnect();
+    for (const surfaceObserver of surfaceObservers.values()) {
+      surfaceObserver.disconnect();
+    }
+    surfaceObservers.clear();
     if (routeTimer) clearInterval(routeTimer);
     if (applyTimer) clearTimeout(applyTimer);
+    if (applyIdleHandle && "cancelIdleCallback" in window) {
+      cancelIdleCallback(applyIdleHandle);
+    }
     if (hoverHideTimer) clearTimeout(hoverHideTimer);
-    if (hoverMoveFrame) cancelAnimationFrame(hoverMoveFrame);
+    if (hoverMoveTimer) clearTimeout(hoverMoveTimer);
     try {
       CSS.highlights?.delete(HIGHLIGHT_PREFIX);
       for (const name of Object.keys(COLORS)) {
@@ -1085,26 +1285,18 @@
   document.addEventListener("pointerup", onPointerUp, true);
   document.addEventListener("pointermove", onPointerMove, true);
   document.addEventListener("keydown", onKeyDown, true);
-  observer = new MutationObserver((records) => {
-    if (records.some((record) => record.type === "childList" || record.type === "characterData")) {
-      resolvedRanges.clear();
-      scheduleApply();
-    }
-  });
-  observer.observe(document.documentElement, {
-    childList: true,
-    subtree: true,
-    characterData: true,
-  });
+  refreshSurfaceObservers();
   lastContextKey = contextKey();
   routeTimer = setInterval(() => {
     const current = contextKey();
     if (current !== lastContextKey) {
       lastContextKey = current;
+      initialFullScan = true;
       hideToolbar();
       hideHoverToolbar();
       scheduleApply(0);
     }
+    refreshSurfaceObservers();
     if (
       !document.getElementById(STYLE_ID) ||
       !toolbarHost?.isConnected ||
@@ -1112,13 +1304,15 @@
     ) {
       ensure();
     }
-  }, 1200);
+  }, 2500);
 
   window[STATE_KEY] = {
     version: VERSION,
     ensure,
     cleanup,
     health,
+    syncState,
+    diagnostics,
     importData,
     exportData,
   };
