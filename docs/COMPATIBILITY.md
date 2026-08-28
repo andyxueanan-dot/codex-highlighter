@@ -22,6 +22,7 @@ A verified row has passed all of the following on a real Codex installation:
 - persist and re-anchor highlights after DOM replacement;
 - keep short-word anchors isolated when duplicate words appear later or inside editable composers;
 - display the palette without synchronously re-anchoring even when 120 resolved Ranges became stale;
+- persist selections inside clickable plain-text cards and syntax-highlighted code spanning multiple text nodes;
 - add, recolor and delete all five colors;
 - show direct hover deletion and avoid the native selection menu;
 - export, import, search, delete and clear records in the native manager;

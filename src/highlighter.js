@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const VERSION = "1.2.1";
+  const VERSION = "1.2.2";
   const STATE_KEY = "__CODEX_HIGHLIGHTER__";
   const STORAGE_KEY = "codex-highlighter:data:v1";
   const STYLE_ID = "codex-highlighter-style";
@@ -20,6 +20,7 @@
   const EDITABLE_SELECTOR =
     "input,textarea,select,[contenteditable='true'],[contenteditable='']," +
     "[role='textbox'],[data-lexical-editor='true']";
+  const LITERAL_TEXT_SELECTOR = "pre,code,samp,kbd,tt";
 
   if (window[STATE_KEY]?.version === VERSION) {
     window[STATE_KEY].ensure();
@@ -202,10 +203,20 @@
     if (!surface || surface !== selectionSurface(end) || !surface.contains(end)) {
       return false;
     }
-    const blocked =
-      `${EDITABLE_SELECTOR},button,[role='button'],nav,[role='dialog'],[role='menu'],` +
+    const hardBlocked =
+      `${EDITABLE_SELECTOR},nav,[role='dialog'],[role='menu'],` +
       `#${TOOLBAR_HOST_ID},#${HOVER_HOST_ID}`;
-    if (start.closest(blocked) || end.closest(blocked)) return false;
+    if (start.closest(hardBlocked) || end.closest(hardBlocked)) return false;
+    const literalStart = start.closest(LITERAL_TEXT_SELECTOR);
+    const literalEnd = end.closest(LITERAL_TEXT_SELECTOR);
+    const interactiveStart = start.closest("button,[role='button']");
+    const interactiveEnd = end.closest("button,[role='button']");
+    if (
+      (interactiveStart || interactiveEnd) &&
+      (!literalStart || !literalEnd)
+    ) {
+      return false;
+    }
     const exact = range.toString();
     return exact.trim().length > 0 && exact.length <= MAX_SELECTION_LENGTH;
   }
@@ -239,6 +250,12 @@
       return null;
     }
 
+    const literal = start.closest(LITERAL_TEXT_SELECTOR);
+    if (literal && literal.contains(range.endContainer)) {
+      const pre = literal.closest("pre");
+      return pre && pre.contains(range.endContainer) ? pre : literal;
+    }
+
     const semantic = semanticScope(start);
     if (semantic && semantic.contains(end)) return semantic;
 
@@ -259,6 +276,10 @@
       "H4",
       "H5",
       "H6",
+      "CODE",
+      "SAMP",
+      "KBD",
+      "TT",
     ]);
     while (node && node !== surface.parentElement) {
       if (!node.contains(range.startContainer) || !node.contains(range.endContainer)) {
@@ -391,7 +412,7 @@
     for (const surface of surfaces) {
       for (const node of surface.querySelectorAll(
         "[data-message-id],[data-turn-id],[data-testid*='conversation-turn']," +
-          "[data-testid*='message'],article,[role='article'],p,li,pre," +
+          "[data-testid*='message'],article,[role='article'],p,li,pre,code,samp,kbd,tt," +
           "blockquote,h1,h2,h3,h4,h5,h6",
       )) {
         add(node);

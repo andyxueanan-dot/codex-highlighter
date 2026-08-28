@@ -10,7 +10,7 @@
 
 <p align="center">
   <img alt="Windows" src="https://img.shields.io/badge/Windows-10%20%7C%2011-0078D4?logo=windows">
-  <img alt="Version" src="https://img.shields.io/badge/version-1.2.1-ffca28">
+  <img alt="Version" src="https://img.shields.io/badge/version-1.2.2-ffca28">
   <img alt="License" src="https://img.shields.io/badge/license-MIT-2ea44f">
 </p>
 
@@ -42,7 +42,7 @@ Codex Highlighter 为 Windows 版 Codex 桌面应用增加一个功能：在聊�
 
 ### 安装发布版
 
-1. 从 [GitHub Releases](https://github.com/andyxueanan-dot/codex-highlighter/releases/latest) 下载 `codex-highlighter-v1.2.1-windows-x64.zip`。
+1. 从 [GitHub Releases](https://github.com/andyxueanan-dot/codex-highlighter/releases/latest) 下载 `codex-highlighter-v1.2.2-windows-x64.zip`。
 2. 解压后在 PowerShell 中运行 `install.ps1`。
 3. 安装器使用当前用户目录，不需要管理员权限。
 

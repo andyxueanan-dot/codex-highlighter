@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.2.2 - 2026-08-28
+
+- Allow selections inside Codex plain-text and code cards even when their outer card is clickable.
+- Treat `pre`, `code`, `samp`, `kbd`, and `tt` as literal-text regions.
+- Prefer the enclosing `pre` block as the persistent anchor for literal text and syntax-highlighted code.
+- Support selections spanning multiple syntax-highlighted `span` nodes.
+- Keep real buttons, text inputs, content-editable composers, and menu controls excluded.
+- Add persistence regression coverage for plain text and multi-span code inside `role=button` cards.
+
 ## 1.2.1 - 2026-08-28
 
 - Show the color palette immediately before checking whether the selection overlaps an existing highlight.

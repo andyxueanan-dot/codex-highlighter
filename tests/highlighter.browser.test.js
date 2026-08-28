@@ -39,6 +39,41 @@ async function selectText(page, selector, start, end) {
   );
 }
 
+async function selectTextByNeedle(page, selector, needle) {
+  await page.evaluate(
+    ({ selector, needle }) => {
+      const element = document.querySelector(selector);
+      const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+      const nodes = [];
+      let fullText = "";
+      let node = walker.nextNode();
+      while (node) {
+        nodes.push({ node, start: fullText.length, end: fullText.length + node.data.length });
+        fullText += node.data;
+        node = walker.nextNode();
+      }
+      const start = fullText.indexOf(needle);
+      if (start < 0) throw new Error(`Needle not found: ${needle}`);
+      const end = start + needle.length;
+      const startNode = nodes.find((item) => start >= item.start && start <= item.end);
+      const endNode = nodes.find((item) => end >= item.start && end <= item.end);
+      const range = document.createRange();
+      range.setStart(startNode.node, start - startNode.start);
+      range.setEnd(endNode.node, end - endNode.start);
+      const selection = getSelection();
+      selection.removeAllRanges();
+      selection.addRange(range);
+      element.dispatchEvent(new PointerEvent("pointerup", { bubbles: true }));
+    },
+    { selector, needle },
+  );
+  await page.waitForFunction(
+    () =>
+      document.querySelector("#codex-highlighter-toolbar-host")?.style.display ===
+      "block",
+  );
+}
+
 async function clickColor(page, color) {
   await page.evaluate((color) => {
     document
@@ -82,6 +117,15 @@ function intersects(left, right) {
         <main>
           <article data-message-id="message-1">
             <p id="answer">Alpha beta gamma delta. Stable anchoring test.</p>
+            <div id="plain-card" role="button">
+              <div>Plain text</div>
+              <pre><code id="plain-code">A1: all members report to the leader\nBlock 12: all edges</code></pre>
+            </div>
+            <div id="syntax-card" role="button">
+              <div>JavaScript</div>
+              <pre><code id="syntax-code"><span>const </span><span>answer</span><span> = </span><span>42</span><span>;</span></code></pre>
+            </div>
+            <button id="real-control" type="button">Do not highlight this control</button>
           </article>
           <div id="short-anchor-zone"></div>
           <div id="duplicate-zone"></div>
@@ -105,6 +149,71 @@ function intersects(left, right) {
       () => window.__CODEX_HIGHLIGHTER__.health().supported,
     );
     if (!supported) throw new Error("CSS Highlights API is unavailable");
+
+    await selectTextByNeedle(page, "#plain-code", "Block 12");
+    await clickColor(page, "cyan");
+    await page.waitForFunction(
+      () =>
+        window.__CODEX_HIGHLIGHTER__.health().count === 1 &&
+        window.__CODEX_HIGHLIGHTER__.health().resolved === 1,
+    );
+    await selectTextByNeedle(page, "#syntax-code", "answer = 42");
+    await clickColor(page, "pink");
+    await page.waitForFunction(
+      () =>
+        window.__CODEX_HIGHLIGHTER__.health().count === 2 &&
+        window.__CODEX_HIGHLIGHTER__.health().resolved === 2,
+    );
+    const literalData = await page.evaluate(() =>
+      JSON.parse(window.__CODEX_HIGHLIGHTER__.exportData()).highlights.map(
+        (anchor) => ({ exact: anchor.exact, tag: anchor.scopeTag, color: anchor.color }),
+      ),
+    );
+    if (
+      !literalData.some(
+        (anchor) =>
+          anchor.exact === "Block 12" && anchor.tag === "PRE" && anchor.color === "cyan",
+      ) ||
+      !literalData.some(
+        (anchor) =>
+          anchor.exact === "answer = 42" && anchor.tag === "PRE" && anchor.color === "pink",
+      )
+    ) {
+      throw new Error(`Literal text anchors were not preserved: ${JSON.stringify(literalData)}`);
+    }
+    await page.evaluate(() => {
+      const highlighter = window.__CODEX_HIGHLIGHTER__;
+      const state = highlighter.syncState();
+      highlighter.importData({
+        version: 1,
+        revision: state.revision + 1,
+        updatedAt: Date.now(),
+        highlights: [],
+      });
+    });
+    await page.waitForFunction(
+      () => window.__CODEX_HIGHLIGHTER__.health().count === 0,
+    );
+    await page.evaluate(() => {
+      const text = document.querySelector("#real-control").firstChild;
+      const range = document.createRange();
+      range.selectNodeContents(text);
+      const selection = getSelection();
+      selection.removeAllRanges();
+      selection.addRange(range);
+      document
+        .querySelector("#real-control")
+        .dispatchEvent(new PointerEvent("pointerup", { bubbles: true }));
+    });
+    await page.waitForTimeout(120);
+    const controlToolbar = await page.evaluate(
+      () =>
+        document.querySelector("#codex-highlighter-toolbar-host")?.style.display ||
+        "none",
+    );
+    if (controlToolbar !== "none") {
+      throw new Error("A real button incorrectly opened the highlight palette");
+    }
 
     await selectText(page, "#answer", 6, 16);
     const placement = await page.evaluate(() => {
