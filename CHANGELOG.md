@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.2.5 - 2026-08-29
+
+- Remove every background path that could close or relaunch Codex after a CDP timeout or disconnect.
+- Keep retrying non-destructively when the debugging endpoint is temporarily unavailable.
+- Require an explicit tray-menu action and confirmation before any reconnect that restarts Codex.
+- Yield immediately to Codex's native Add to conversation, Ask in side chat, and More actions instead of recapturing their text selection.
+- Add regressions for native side-chat actions and non-destructive host failure handling.
+
 ## 1.2.4 - 2026-08-29
 
 - Launch the installed tray monitor through the Windows process service, with a desktop-shell fallback, so it is not tied to the terminal or Codex process tree that ran the installer.

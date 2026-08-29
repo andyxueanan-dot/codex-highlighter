@@ -10,7 +10,7 @@
 
 <p align="center">
   <img alt="Windows" src="https://img.shields.io/badge/Windows-10%20%7C%2011-0078D4?logo=windows">
-  <img alt="Version" src="https://img.shields.io/badge/version-1.2.4-ffca28">
+  <img alt="Version" src="https://img.shields.io/badge/version-1.2.5-ffca28">
   <img alt="License" src="https://img.shields.io/badge/license-MIT-2ea44f">
 </p>
 
@@ -44,7 +44,7 @@ Codex Highlighter 为 Windows 版 Codex 桌面应用增加一个功能：在聊�
 
 ### 安装发布版
 
-1. 从 [GitHub Releases](https://github.com/andyxueanan-dot/codex-highlighter/releases/latest) 下载 `codex-highlighter-v1.2.4-windows-x64.zip`。
+1. 从 [GitHub Releases](https://github.com/andyxueanan-dot/codex-highlighter/releases/latest) 下载 `codex-highlighter-v1.2.5-windows-x64.zip`。
 2. 解压后在 PowerShell 中运行 `install.ps1`。
 3. 安装器使用当前用户目录，不需要管理员权限。
 
@@ -68,9 +68,9 @@ cd codex-highlighter
 
 右键黄色托盘图标并选择“管理高亮数据”，可以搜索记录、删除选中、清空全部以及导入/导出 JSON 备份。
 
-安装器还会创建当前用户的开机启动快捷方式。Windows 登录时只启动托盘监控，不会主动弹出 Codex；之后打开或单独重启 Codex 时，高亮会自动恢复。
+安装器还会创建当前用户的开机启动快捷方式。Windows 登录时只启动托盘监控，不会主动弹出 Codex。Codex 仍带有高亮器的本机调试端口时会自动重连；如果端口不存在，则等待你从托盘明确操作。
 
-安装器会通过 Windows 独立启动托盘监控，因此重启 Codex 或切换 Codex 账号时，不会再把高亮器作为 Codex 的从属进程一同关闭。切号后的 Codex 如果没有保留本机调试端口，高亮器可能会再自动重启一次 Codex 来恢复连接；本地高亮数据不会受影响。
+安装器会通过 Windows 独立启动托盘监控，因此重启 Codex 或切换 Codex 账号时，不会再把高亮器作为 Codex 的从属进程一同关闭。后台监控绝不会自行关闭或重启 Codex。如果之后打开的 Codex 没有本机调试端口，高亮会暂时停用；只有你从托盘选择“连接或重启 Codex（需确认）”并明确同意后，才会执行一次受控重启。
 
 颜色工具条会优先显示在选区下方，并避开 Codex 自带的“添加到对话”“更多”和“在侧边聊天中提问”菜单。程序运行后位于 Windows 系统托盘。退出托盘程序会立即撤掉当前页面上的高亮，但保留数据；下次启动后会恢复。
 

@@ -173,7 +173,9 @@ function intersects(left, right) {
         </aside>
         <div id="native-selection-menu"
           style="display:none;position:fixed;z-index:1000;background:white">
-          <button type="button">添加到对话</button><button type="button">更多</button>
+          <button type="button">添加到对话</button>
+          <button id="ask-side-chat" type="button">在侧边聊天中提问</button>
+          <button type="button">更多</button>
         </div>
       </body></html>
     `);
@@ -353,6 +355,26 @@ function intersects(left, right) {
     if (intersects(placement.toolbar, placement.nativeMenu)) {
       throw new Error("Highlight palette overlaps the native Codex selection menu");
     }
+    await page.evaluate(() => {
+      window.__sideChatOpenCount = 0;
+      document.querySelector("#ask-side-chat").addEventListener("click", () => {
+        window.__sideChatOpenCount += 1;
+      });
+    });
+    await page.click("#ask-side-chat");
+    const nativeActionState = await page.evaluate(() => ({
+      count: window.__sideChatOpenCount,
+      toolbar:
+        document.querySelector("#codex-highlighter-toolbar-host")?.style.display ||
+        "none",
+    }));
+    if (nativeActionState.count !== 1 || nativeActionState.toolbar !== "none") {
+      throw new Error(
+        "Native side-chat action was intercepted by the highlighter: " +
+          JSON.stringify(nativeActionState),
+      );
+    }
+    await selectText(page, "#answer", 6, 16);
     await clickColor(page, "yellow");
     await page.waitForFunction(
       () => window.__CODEX_HIGHLIGHTER__.health().resolved === 1,

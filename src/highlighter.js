@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const VERSION = "1.2.4";
+  const VERSION = "1.2.5";
   const STATE_KEY = "__CODEX_HIGHLIGHTER__";
   const STORAGE_KEY = "codex-highlighter:data:v1";
   const STYLE_ID = "codex-highlighter-style";
@@ -25,6 +25,8 @@
     "td,th,[role='cell'],[role='gridcell'],[role='columnheader'],[role='rowheader']";
   const TABLE_ROW_SELECTOR = "tr,[role='row']";
   const TABLE_CONTAINER_SELECTOR = "table,[role='table'],[role='grid']";
+  const NATIVE_SELECTION_ACTION_LABELS =
+    /添加到对话|在侧边聊天中提问|更多|Add to conversation|Ask in side chat|More/i;
 
   if (window[STATE_KEY]?.version === VERSION) {
     window[STATE_KEY].ensure();
@@ -825,10 +827,9 @@
   }
 
   function nearbyNativeMenuRects(selectionRect) {
-    const labels = /添加到对话|在侧边聊天中提问|更多|Add to conversation|Ask in side chat|More/i;
     const rects = [];
     for (const node of document.querySelectorAll("button,[role='button']")) {
-      if (!labels.test((node.textContent || "").trim())) continue;
+      if (!NATIVE_SELECTION_ACTION_LABELS.test((node.textContent || "").trim())) continue;
       const rect = node.getBoundingClientRect();
       if (!rect.width || !rect.height) continue;
       const nearX = rect.right >= selectionRect.left - 280 && rect.left <= selectionRect.right + 280;
@@ -1182,8 +1183,24 @@
 
   function onPointerUp(event) {
     if (toolbarHost?.contains(event.target) || hoverHost?.contains(event.target)) return;
+    if (closestNativeSelectionAction(event.target)) return;
     const startedAt = performance.now();
     setTimeout(() => captureSelection(startedAt), 0);
+  }
+
+  function closestNativeSelectionAction(target) {
+    const element = elementForNode(target);
+    const action = element?.closest?.("button,[role='button']");
+    if (!action) return null;
+    return NATIVE_SELECTION_ACTION_LABELS.test((action.textContent || "").trim())
+      ? action
+      : null;
+  }
+
+  function onPointerDown(event) {
+    if (!closestNativeSelectionAction(event.target)) return;
+    hideToolbar();
+    hideHoverToolbar();
   }
 
   function onPointerMove(event) {
@@ -1354,6 +1371,7 @@
   function cleanup() {
     if (disposed) return true;
     disposed = true;
+    document.removeEventListener("pointerdown", onPointerDown, true);
     document.removeEventListener("pointerup", onPointerUp, true);
     document.removeEventListener("pointermove", onPointerMove, true);
     document.removeEventListener("keydown", onKeyDown, true);
@@ -1382,6 +1400,7 @@
   }
 
   loadLocalData();
+  document.addEventListener("pointerdown", onPointerDown, true);
   document.addEventListener("pointerup", onPointerUp, true);
   document.addEventListener("pointermove", onPointerMove, true);
   document.addEventListener("keydown", onKeyDown, true);

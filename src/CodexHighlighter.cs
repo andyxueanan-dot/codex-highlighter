@@ -16,8 +16,8 @@ using System.Windows.Forms;
 [assembly: AssemblyTitle("Codex Highlighter")]
 [assembly: AssemblyDescription("Persistent yellow text highlighting for the Codex desktop transcript")]
 [assembly: AssemblyProduct("Codex Highlighter")]
-[assembly: AssemblyVersion("1.2.4.0")]
-[assembly: AssemblyFileVersion("1.2.4.0")]
+[assembly: AssemblyVersion("1.2.5.0")]
+[assembly: AssemblyFileVersion("1.2.5.0")]
 
 namespace CodexHighlighter
 {
@@ -167,7 +167,7 @@ namespace CodexHighlighter
             ContextMenuStrip menu = new ContextMenuStrip();
             statusItem = new ToolStripMenuItem("状态：正在启动");
             statusItem.Enabled = false;
-            reconnectItem = new ToolStripMenuItem("连接或重启 Codex", null, OnReconnect);
+            reconnectItem = new ToolStripMenuItem("连接或重启 Codex（需确认）", null, OnReconnect);
             reinjectItem = new ToolStripMenuItem("重新加载高亮功能", null, OnReinject);
             ToolStripMenuItem manageData = new ToolStripMenuItem("管理高亮数据", null, OnManageData);
             ToolStripMenuItem openFolder = new ToolStripMenuItem("打开高亮数据目录", null, OnOpenFolder);
@@ -347,7 +347,7 @@ namespace CodexHighlighter
 
     internal sealed class HighlighterHost : IDisposable
     {
-        private const string Version = "1.2.4";
+        private const string Version = "1.2.5";
         private const int DefaultPort = 9460;
         private const int HealthyMonitorInterval = 15000;
         private const int DisconnectedMonitorInterval = 5000;
@@ -361,11 +361,8 @@ namespace CodexHighlighter
         private int immediateMonitorRequested;
         private int monitorAttempts;
         private int consecutiveFailures;
-        private int recoveryBusy;
         private int port;
         private bool disposed;
-        private bool watchForCodex;
-        private DateTime nextRecoveryUtc = DateTime.MinValue;
         private string status = "等待连接";
         private bool active;
         private bool connected;
@@ -404,7 +401,6 @@ namespace CodexHighlighter
         internal void EnsureConnected(bool interactive)
         {
             ThrowIfDisposed();
-            watchForCodex = true;
             int existingPort = FindExistingPort();
             if (existingPort > 0)
             {
@@ -465,7 +461,6 @@ namespace CodexHighlighter
         internal void StartWatching()
         {
             ThrowIfDisposed();
-            watchForCodex = true;
             int existingPort = FindExistingPort();
             port = existingPort > 0
                 ? existingPort
@@ -760,58 +755,10 @@ namespace CodexHighlighter
             {
                 Log.Write("Monitor connection failed (attempt " + failures + ")", exception);
             }
-            SetStatus("Codex 连接中断，等待自动恢复", false, false);
-            if (!watchForCodex || failures < 3 || DateTime.UtcNow < nextRecoveryUtc)
-            {
-                return;
-            }
-            if (Interlocked.Exchange(ref recoveryBusy, 1) != 0) return;
-            try
-            {
-                string executable = CodexInstallLocator.Find();
-                if (!CodexProcessManager.IsRunning(executable))
-                {
-                    consecutiveFailures = 0;
-                    SetStatus("等待 Codex 启动", false, false);
-                    return;
-                }
-
-                nextRecoveryUtc = DateTime.UtcNow.AddSeconds(45);
-                SetStatus("正在自动恢复 Codex 高亮", false, false);
-                Log.Write("Recovering Codex after its debugging endpoint disappeared");
-                CodexProcessManager.Close(executable);
-                port = SelectFreePort(DefaultPort);
-                CodexProcessManager.Launch(executable, port);
-
-                DateTime deadline = DateTime.UtcNow.AddSeconds(45);
-                while (!disposed && DateTime.UtcNow < deadline && !cdp.EndpointReady(port))
-                {
-                    Thread.Sleep(350);
-                }
-                if (disposed) return;
-                if (!cdp.EndpointReady(port))
-                {
-                    throw new TimeoutException("自动恢复后 Codex 未在 45 秒内开放调试端口。");
-                }
-
-                SavePort(port);
-                consecutiveFailures = 0;
-                monitorAttempts = 0;
-                initializedTargets.Clear();
-                SetStatus("自动恢复成功，正在注入", true, false);
-                Log.Write("Codex automatic recovery succeeded on port " + port);
-                Interlocked.Exchange(ref immediateMonitorRequested, 1);
-            }
-            catch (Exception recoveryException)
-            {
-                nextRecoveryUtc = DateTime.UtcNow.AddSeconds(60);
-                SetStatus("自动恢复失败，可从托盘手动重连", false, false);
-                Log.Write("Codex automatic recovery failed", recoveryException);
-            }
-            finally
-            {
-                Interlocked.Exchange(ref recoveryBusy, 0);
-            }
+            SetStatus(
+                "高亮连接已中断；不会自动重启 Codex，可从托盘手动重连",
+                false,
+                false);
         }
 
         internal void ForceReinject()

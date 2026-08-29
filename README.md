@@ -10,7 +10,7 @@ English | [简体中文](README.zh-CN.md)
 
 <p align="center">
   <img alt="Windows" src="https://img.shields.io/badge/Windows-10%20%7C%2011-0078D4?logo=windows">
-  <img alt="Version" src="https://img.shields.io/badge/version-1.2.4-ffca28">
+  <img alt="Version" src="https://img.shields.io/badge/version-1.2.5-ffca28">
   <img alt="License" src="https://img.shields.io/badge/license-MIT-2ea44f">
 </p>
 
@@ -55,7 +55,7 @@ Requirements: Windows 10 or 11 and the Codex desktop app.
 
 ### Install a release
 
-1. Download `codex-highlighter-v1.2.4-windows-x64.zip` from [GitHub Releases](https://github.com/andyxueanan-dot/codex-highlighter/releases/latest).
+1. Download `codex-highlighter-v1.2.5-windows-x64.zip` from [GitHub Releases](https://github.com/andyxueanan-dot/codex-highlighter/releases/latest).
 2. Extract the archive.
 3. Run `install.ps1` in PowerShell. The installer uses the current user account and does not require administrator access.
 
@@ -79,9 +79,9 @@ Selecting an existing highlight also lets you recolor or delete it. The palette 
 
 Open the yellow tray icon and choose **Manage highlight data** to search records, delete selected rows, clear all data, or import/export JSON backups.
 
-The installer also creates a current-user startup shortcut. It starts only the tray watcher at sign-in, waits quietly while Codex is closed, and restores highlighting automatically after Codex is opened or restarted.
+The installer also creates a current-user startup shortcut. It starts only the tray watcher at sign-in and waits quietly while Codex is closed. It reconnects automatically when Codex still has the highlighter's loopback debugging port; otherwise it waits for an explicit tray action.
 
-The installer starts the tray watcher independently through Windows, so restarting Codex or switching Codex accounts does not terminate it with the Codex process tree. An account switch may briefly restart Codex again if the new process did not retain the loopback debugging port; highlights remain stored locally throughout recovery.
+The installer starts the tray watcher independently through Windows, so restarting Codex or switching Codex accounts does not terminate it with the Codex process tree. The background watcher never closes or relaunches Codex. If Codex is later opened without the loopback debugging port, highlighting remains inactive until you choose **Connect or restart Codex (confirmation required)** from the tray menu and approve one controlled restart.
 
 ## How it works
 
