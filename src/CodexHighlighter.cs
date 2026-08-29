@@ -16,8 +16,8 @@ using System.Windows.Forms;
 [assembly: AssemblyTitle("Codex Highlighter")]
 [assembly: AssemblyDescription("Persistent yellow text highlighting for the Codex desktop transcript")]
 [assembly: AssemblyProduct("Codex Highlighter")]
-[assembly: AssemblyVersion("1.2.3.0")]
-[assembly: AssemblyFileVersion("1.2.3.0")]
+[assembly: AssemblyVersion("1.2.4.0")]
+[assembly: AssemblyFileVersion("1.2.4.0")]
 
 namespace CodexHighlighter
 {
@@ -50,10 +50,14 @@ namespace CodexHighlighter
 
                 try
                 {
+                    Log.Write("Application started (background=" +
+                        HasArgument(args, "--startup") + ", pid=" +
+                        Process.GetCurrentProcess().Id + ")");
                     Application.EnableVisualStyles();
                     Application.SetCompatibleTextRenderingDefault(false);
                     Application.Run(new HighlighterApplicationContext(
                         HasArgument(args, "--startup")));
+                    Log.Write("Application exited normally");
                     return 0;
                 }
                 catch (Exception exception)
@@ -343,7 +347,7 @@ namespace CodexHighlighter
 
     internal sealed class HighlighterHost : IDisposable
     {
-        private const string Version = "1.2.3";
+        private const string Version = "1.2.4";
         private const int DefaultPort = 9460;
         private const int HealthyMonitorInterval = 15000;
         private const int DisconnectedMonitorInterval = 5000;

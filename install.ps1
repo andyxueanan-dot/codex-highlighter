@@ -68,6 +68,31 @@ function New-CodexHighlighterShortcut {
     $shortcut.Save()
 }
 
+function Start-CodexHighlighterDetached {
+    $commandLine = '"' + $targetExecutable + '"'
+    try {
+        $result = Invoke-CimMethod -ClassName Win32_Process -MethodName Create `
+            -Arguments @{ CommandLine = $commandLine }
+        if ($result.ReturnValue -eq 0 -and $result.ProcessId -gt 0) {
+            return
+        }
+        Write-Warning "Windows process service returned $($result.ReturnValue); using shell fallback."
+    }
+    catch {
+        Write-Warning "Windows process service was unavailable; using shell fallback: $($_.Exception.Message)"
+    }
+
+    $shell = New-Object -ComObject Shell.Application
+    try {
+        # Normal desktop installs are already outside the Codex process tree.
+        # Keep a shell fallback for systems where local WMI process creation is unavailable.
+        $shell.ShellExecute($targetExecutable, '', $appDirectory, 'open', 1)
+    }
+    finally {
+        [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($shell)
+    }
+}
+
 if (-not $NoShortcut) {
     New-Item -ItemType Directory -Path $ProgramsDirectory -Force | Out-Null
     New-CodexHighlighterShortcut `
@@ -86,5 +111,5 @@ Write-Output "Saved highlights remain in: $(Join-Path $resolvedInstallRoot 'high
 if (-not $NoStartup) { Write-Output 'Enabled current-user startup recovery.' }
 
 if (-not $NoStart) {
-    Start-Process -FilePath $targetExecutable
+    Start-CodexHighlighterDetached
 }

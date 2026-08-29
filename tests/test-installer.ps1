@@ -12,6 +12,13 @@ if (-not ($resolvedTestRoot.TrimEnd('\') + '\').StartsWith(
 }
 
 try {
+    $installerSource = Get-Content -LiteralPath (Join-Path $projectRoot 'install.ps1') -Raw
+    if ($installerSource -notmatch 'Invoke-CimMethod\s+-ClassName\s+Win32_Process' -or
+        $installerSource -notmatch '\.ShellExecute\(' -or
+        $installerSource -match 'Start-Process\s+-FilePath\s+\$targetExecutable') {
+        throw 'Installer does not launch the tray monitor independently with a shell fallback'
+    }
+
     New-Item -ItemType Directory -Path $resolvedTestRoot -Force | Out-Null
     $dataPath = Join-Path $resolvedTestRoot 'highlights.json'
     $testPrograms = Join-Path $resolvedTestRoot 'test-programs'

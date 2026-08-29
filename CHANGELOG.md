@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.2.4 - 2026-08-29
+
+- Launch the installed tray monitor through the Windows process service, with a desktop-shell fallback, so it is not tied to the terminal or Codex process tree that ran the installer.
+- Keep the monitor alive when switching Codex accounts restarts the Codex process group.
+- Add explicit application-start and normal-exit log entries for lifecycle diagnostics.
+- Preserve the existing automatic CDP recovery and all local highlight data during account changes.
+
 ## 1.2.3 - 2026-08-28
 
 - Add highlighting support for native HTML tables and ARIA table/grid structures.
