@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const VERSION = "1.2.5";
+  const VERSION = "1.2.6";
   const STATE_KEY = "__CODEX_HIGHLIGHTER__";
   const STORAGE_KEY = "codex-highlighter:data:v1";
   const STYLE_ID = "codex-highlighter-style";
@@ -25,6 +25,9 @@
     "td,th,[role='cell'],[role='gridcell'],[role='columnheader'],[role='rowheader']";
   const TABLE_ROW_SELECTOR = "tr,[role='row']";
   const TABLE_CONTAINER_SELECTOR = "table,[role='table'],[role='grid']";
+  const FORMULA_SCOPE_SELECTOR = ".katex-display,.katex,mjx-container";
+  const RESPONSE_ANNOTATION_SELECTOR =
+    "[data-response-annotation-conversation][data-response-annotation-target]";
   const NATIVE_SELECTION_ACTION_LABELS =
     /添加到对话|在侧边聊天中提问|更多|Add to conversation|Ask in side chat|More/i;
 
@@ -217,14 +220,17 @@
     const literalEnd = end.closest(LITERAL_TEXT_SELECTOR);
     const tableStart = start.closest(TABLE_CONTAINER_SELECTOR);
     const tableEnd = end.closest(TABLE_CONTAINER_SELECTOR);
+    const formulaStart = formulaScope(start);
+    const formulaEnd = formulaScope(end);
     const structuredSelection =
       (literalStart && literalEnd) ||
-      (tableStart && tableStart === tableEnd);
+      (tableStart && tableStart === tableEnd) ||
+      (formulaStart && formulaStart === formulaEnd);
     if (start.closest("button") || end.closest("button")) return false;
     const interactiveStart = start.closest("[role='button']");
     const interactiveEnd = end.closest("[role='button']");
-    const startTarget = tableStart || literalStart;
-    const endTarget = tableEnd || literalEnd;
+    const startTarget = formulaStart || tableStart || literalStart;
+    const endTarget = formulaEnd || tableEnd || literalEnd;
     const wrappedStart =
       !interactiveStart ||
       (structuredSelection && startTarget && interactiveStart.contains(startTarget));
@@ -239,24 +245,58 @@
   function semanticScope(element) {
     return element.closest(
       "[data-message-id],[data-turn-id],[data-testid*='conversation-turn']," +
-        "[data-testid*='message'],article,[role='article']",
+        `[data-testid*='message'],${RESPONSE_ANNOTATION_SELECTOR},` +
+        "article,[role='article']",
     );
+  }
+
+  function formulaScope(element) {
+    if (!element?.closest) return null;
+    const display = element.closest(".katex-display");
+    if (display) return display;
+    return element.closest(".katex,mjx-container");
+  }
+
+  function formulaVisibleRoot(scope) {
+    if (!scope?.matches?.(FORMULA_SCOPE_SELECTOR)) return scope;
+    return scope.querySelector(".katex-html") || scope;
   }
 
   function scopeIdentity(element) {
     const semantic = element?.closest?.(
       "[data-message-id],[data-turn-id],[data-testid*='conversation-turn']," +
-        "[data-testid*='message'],article,[role='article']",
+        `[data-testid*='message'],${RESPONSE_ANNOTATION_SELECTOR},` +
+        "article,[role='article']",
     );
     let base = "";
     if (semantic) {
+      const conversation = semantic.getAttribute("data-response-annotation-conversation");
+      const target = semantic.getAttribute("data-response-annotation-target");
+      if (conversation && target) {
+        base = `response:${conversation}:${target}`;
+      }
       for (const name of ["data-message-id", "data-turn-id", "data-testid", "id"]) {
+        if (base) break;
         const value = semantic.getAttribute(name);
         if (value) {
           base = name + ":" + value;
           break;
         }
       }
+    }
+
+    const formula = formulaScope(element);
+    if (formula) {
+      const owner = semantic || selectionSurface(element) || pageRoot();
+      const formulas = Array.from(owner.querySelectorAll(FORMULA_SCOPE_SELECTOR)).filter(
+        (candidate) => formulaScope(candidate) === candidate,
+      );
+      const formulaIndex = Math.max(0, formulas.indexOf(formula));
+      const tex =
+        formula.querySelector('annotation[encoding="application/x-tex"]')
+          ?.textContent || "";
+      const suffix = `formula:${formulaIndex}:${fingerprint(tex || scopedText(formula))}`;
+      return base ? base + "|" + suffix : suffix;
     }
 
     const table = element?.closest?.(TABLE_CONTAINER_SELECTOR);
@@ -293,6 +333,7 @@
       return base ? base + "|" + suffix : suffix;
     }
 
+    if (base) return base;
     if (!semantic) return "";
     for (const name of ["data-message-id", "data-turn-id", "data-testid", "id"]) {
       const value = semantic.getAttribute(name);
@@ -309,6 +350,10 @@
     if (!surface || surface !== selectionSurface(end) || !surface.contains(end)) {
       return null;
     }
+
+    const startFormula = formulaScope(start);
+    const endFormula = formulaScope(end);
+    if (startFormula && startFormula === endFormula) return startFormula;
 
     const literal = start.closest(LITERAL_TEXT_SELECTOR);
     if (literal && literal.contains(range.endContainer)) {
@@ -398,13 +443,18 @@
   }
 
   function createAnchor(range, color = "yellow") {
-    const scope = chooseScope(range);
+    const anchorRange = normalizeFormulaRange(range);
+    const scope = chooseScope(anchorRange);
     if (!scope) return null;
     const scopeText = scopedText(scope);
-    const start = offsetWithin(scope, range.startContainer, range.startOffset);
-    const end = offsetWithin(scope, range.endContainer, range.endOffset);
+    const start = offsetWithin(
+      scope,
+      anchorRange.startContainer,
+      anchorRange.startOffset,
+    );
+    const end = offsetWithin(scope, anchorRange.endContainer, anchorRange.endOffset);
     if (start < 0 || end <= start) return null;
-    const exact = range.toString();
+    const exact = anchorRange.toString();
     return sanitizeAnchor({
       id: `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`,
       contextKey: contextKey(),
@@ -423,9 +473,28 @@
     });
   }
 
+  function normalizeFormulaRange(range) {
+    const start = elementForNode(range?.startContainer);
+    const end = elementForNode(range?.endContainer);
+    const formula = formulaScope(start);
+    if (!formula || formula !== formulaScope(end)) return range;
+    if (
+      !start.closest(".katex-mathml,math") &&
+      !end.closest(".katex-mathml,math")
+    ) {
+      return range;
+    }
+    const visible = formulaVisibleRoot(formula);
+    if (!visible || visible === formula) return range;
+    const normalized = document.createRange();
+    normalized.selectNodeContents(visible);
+    return normalized;
+  }
+
   function textNodes(root) {
     const nodes = [];
-    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+    const traversalRoot = formulaVisibleRoot(root);
+    const walker = document.createTreeWalker(traversalRoot, NodeFilter.SHOW_TEXT, {
       acceptNode(node) {
         const parent = node.parentElement;
         if (!parent) return NodeFilter.FILTER_REJECT;
@@ -460,7 +529,7 @@
     let started = false;
     for (const node of textNodes(scope)) {
       const next = position + node.data.length;
-      if (!started && start >= position && start <= next) {
+      if (!started && start >= position && start < next) {
         range.setStart(node, Math.min(node.data.length, start - position));
         started = true;
       }
@@ -480,6 +549,12 @@
     const seen = new Set();
     const add = (node) => {
       if (!node || seen.has(node) || node === toolbarHost) return;
+      if (
+        node.matches?.(FORMULA_SCOPE_SELECTOR) &&
+        formulaScope(node) !== node
+      ) {
+        return;
+      }
       if (node.matches?.(EDITABLE_SELECTOR) || node.closest?.(EDITABLE_SELECTOR)) {
         return;
       }
@@ -491,7 +566,9 @@
     for (const surface of surfaces) {
       for (const node of surface.querySelectorAll(
         "[data-message-id],[data-turn-id],[data-testid*='conversation-turn']," +
-          "[data-testid*='message'],article,[role='article'],p,li,pre,code,samp,kbd,tt," +
+          `[data-testid*='message'],${RESPONSE_ANNOTATION_SELECTOR},` +
+          "article,[role='article'],p,li,pre,code,samp,kbd,tt," +
+          `${FORMULA_SCOPE_SELECTOR},` +
           "table,thead,tbody,tfoot,tr,th,td,[role='table'],[role='grid']," +
           "[role='row'],[role='cell'],[role='gridcell'],[role='columnheader'],[role='rowheader']," +
           "blockquote,h1,h2,h3,h4,h5,h6",

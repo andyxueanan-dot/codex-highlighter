@@ -110,7 +110,13 @@ function intersects(left, right) {
   try {
     await page.setContent(`
       <!doctype html>
-      <html><head><meta charset="utf-8"><title>Codex fixture</title></head>
+      <html><head><meta charset="utf-8"><title>Codex fixture</title>
+        <style>
+          .katex-mathml { position:absolute; width:1px; height:1px; overflow:hidden; }
+          .katex-display, .katex, .katex-html { display:block; }
+          .katex-html .base { display:inline-block; white-space:nowrap; }
+        </style>
+      </head>
       <body>
         <nav>Sidebar text that must not be highlighted</nav>
         <main id="non-chat-main"><p>Unrelated first main region.</p></main>
@@ -157,6 +163,33 @@ function intersects(left, right) {
               <div role="row">
                 <div role="gridcell">Model B</div>
                 <div id="aria-cell" role="gridcell">strict grouping</div>
+              </div>
+            </div>
+            <div data-response-annotation-conversation="conversation-1"
+              data-response-annotation-target="formula-message">
+              <span id="formula" class="katex-display">
+                <span class="katex">
+                  <span class="katex-mathml">
+                    <math><semantics><mrow><mi>r</mi><mi>i</mi><mo>+</mo><mi>ε</mi><mi>i</mi></mrow>
+                      <annotation encoding="application/x-tex">\\tilde{\\mathbf r}_i=\\mathbf r_i+\\epsilon_i</annotation>
+                    </semantics></math>
+                  </span>
+                  <span id="formula-visible" class="katex-html" aria-hidden="true">
+                    <span class="base"><span>r̃</span><span>i</span><span>=</span></span>
+                    <span class="base"><span>r</span><span>i</span><span>+</span><span>ε</span><span>i</span></span>
+                  </span>
+                </span>
+              </span>
+            </div>
+            <div id="css-grid-message"
+              data-response-annotation-conversation="conversation-1"
+              data-response-annotation-target="css-table-message">
+              <div id="css-grid-table"
+                style="display:grid;grid-template-columns:130px 1fr">
+                <strong>词性</strong><strong>含义</strong>
+                <span>n.</span><span id="css-grid-cell">厚而平整的一大块，如石板、混凝土板</span>
+                <span>n. 材料计算</span><span>模拟材料表面的有限厚度“晶面薄片”</span>
+                <span>v. 少见</span><span>把材料切成厚板</span>
               </div>
             </div>
             <button id="real-control" type="button">Do not highlight this control</button>
@@ -208,10 +241,14 @@ function intersects(left, right) {
     await clickColor(page, "purple");
     await selectTextByNeedle(page, "#aria-cell", "strict grouping");
     await clickColor(page, "cyan");
+    await selectTextByNeedle(page, "#formula-visible", "ri+εi");
+    await clickColor(page, "yellow");
+    await selectTextByNeedle(page, "#css-grid-cell", "厚而平整的一大块");
+    await clickColor(page, "green");
     await page.waitForFunction(
       () =>
-        window.__CODEX_HIGHLIGHTER__.health().count === 6 &&
-        window.__CODEX_HIGHLIGHTER__.health().resolved === 6,
+        window.__CODEX_HIGHLIGHTER__.health().count === 8 &&
+        window.__CODEX_HIGHLIGHTER__.health().resolved === 8,
     );
     const literalData = await page.evaluate(() =>
       JSON.parse(window.__CODEX_HIGHLIGHTER__.exportData()).highlights.map(
@@ -256,6 +293,20 @@ function intersects(left, right) {
           anchor.tag === "DIV" &&
           anchor.color === "cyan" &&
           /table:1:row:1:cell:1$/.test(anchor.identity),
+      ) ||
+      !literalData.some(
+        (anchor) =>
+          anchor.exact === "ri+εi" &&
+          anchor.tag === "SPAN" &&
+          anchor.color === "yellow" &&
+          /formula:0:[0-9a-f]{8}$/.test(anchor.identity),
+      ) ||
+      !literalData.some(
+        (anchor) =>
+          anchor.exact === "厚而平整的一大块" &&
+          anchor.tag === "DIV" &&
+          anchor.color === "green" &&
+          anchor.identity === "response:conversation-1:css-table-message",
       )
     ) {
       throw new Error(
@@ -275,6 +326,66 @@ function intersects(left, right) {
         (range) => range.startContainer?.parentElement?.id === "repeat-cell-2",
       );
     });
+    const formulaRange = await page.evaluate(() => {
+      const ranges = Array.from(
+        CSS.highlights.get("codex-study-highlight-yellow") || [],
+      );
+      const range = ranges.find(
+        (item) => item.startContainer?.parentElement?.closest(".katex-html"),
+      );
+      return range
+        ? {
+            text: range.toString(),
+            visible: Boolean(
+              range.startContainer?.parentElement?.closest(".katex-html"),
+            ),
+          }
+        : null;
+    });
+    if (!formulaRange?.visible || formulaRange.text !== "ri+εi") {
+      throw new Error(`Formula highlight did not use the visible layer: ${JSON.stringify(formulaRange)}`);
+    }
+    await page.evaluate(() => {
+      const formula = document.querySelector("#formula");
+      formula.outerHTML = formula.outerHTML;
+    });
+    await page.waitForFunction(() =>
+      Array.from(CSS.highlights.get("codex-study-highlight-yellow") || []).some(
+        (range) =>
+          range.toString() === "ri+εi" &&
+          range.startContainer?.parentElement?.closest(".katex-html"),
+      ),
+    );
+    await page.evaluate(() => {
+      const table = document.querySelector("#css-grid-table");
+      table.outerHTML = table.outerHTML;
+    });
+    await page.waitForTimeout(1400);
+    const cssGridRange = await page.evaluate(() => {
+      const ranges = Array.from(
+        CSS.highlights.get("codex-study-highlight-green") || [],
+      ).map((range) => ({
+        text: range.toString(),
+        parentId: range.startContainer?.parentElement?.id || "",
+        endParentId: range.endContainer?.parentElement?.id || "",
+        connected: Boolean(range.startContainer?.isConnected),
+      }));
+      return {
+        ranges,
+        health: window.__CODEX_HIGHLIGHTER__.health(),
+        diagnostics: window.__CODEX_HIGHLIGHTER__.diagnostics(),
+      };
+    });
+    if (
+      !cssGridRange.ranges.some(
+        (range) =>
+          range.text === "厚而平整的一大块" &&
+          range.parentId === "css-grid-cell" &&
+          range.connected,
+      )
+    ) {
+      throw new Error(`CSS grid table did not re-anchor: ${JSON.stringify(cssGridRange)}`);
+    }
     await page.evaluate(() => {
       const highlighter = window.__CODEX_HIGHLIGHTER__;
       const state = highlighter.syncState();

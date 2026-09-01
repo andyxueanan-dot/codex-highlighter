@@ -1,9 +1,10 @@
 # Compatibility matrix
 
-Last verified: 2026-08-29
+Last verified: 2026-09-01
 
 | Platform | Codex Desktop | Chromium | Status | Evidence |
 | --- | --- | --- | --- | --- |
+| Windows 11 Pro x64, build 26200 | `26.825.6671.0` | `151.0.7922.174` | ✅ Verified | v1.2.6 full suite passed with visible-layer KaTeX and CSS-grid table re-anchoring after complete DOM replacement. |
 | Windows 11 Pro x64, build 26200 | `26.825.5331.0` | `151.0.7922.174` | ✅ Verified | v1.2.5 injected into the real app in 10.8 ms; native side-chat action and non-destructive background recovery regressions passed. |
 | Windows 11 Pro x64, build 26200 | `26.825.4187.0` | `151.0.7922.174` | ✅ Verified | v1.2.4 survived a Codex recovery restart as a WMI-owned interactive process, reinjected successfully, and reported a 7.5 ms latest palette response with 354 stored anchors. |
 | Windows 11 Pro x64, build 26200 | `26.820.9563.0` | `151.0.7922.170` | ✅ Verified | v1.2.1 real-app palette latency was 5.2 ms with 173 stored highlights; selection did not increment the re-anchor count. |
@@ -26,6 +27,8 @@ A verified row has passed all of the following on a real Codex installation:
 - display the palette without synchronously re-anchoring even when 120 resolved Ranges became stale;
 - persist selections inside clickable plain-text cards and syntax-highlighted code spanning multiple text nodes;
 - restore repeated table values to their original native-table or ARIA-grid cell after full table replacement;
+- restore selections inside CSS grid/div tables using the stable Codex response identity;
+- keep KaTeX highlights on the visible HTML formula layer and restore them after full formula replacement;
 - add, recolor and delete all five colors;
 - show direct hover deletion and avoid the native selection menu;
 - export, import, search, delete and clear records in the native manager;

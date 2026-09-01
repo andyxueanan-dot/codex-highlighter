@@ -10,7 +10,7 @@ English | [简体中文](README.zh-CN.md)
 
 <p align="center">
   <img alt="Windows" src="https://img.shields.io/badge/Windows-10%20%7C%2011-0078D4?logo=windows">
-  <img alt="Version" src="https://img.shields.io/badge/version-1.2.5-ffca28">
+  <img alt="Version" src="https://img.shields.io/badge/version-1.2.6-ffca28">
   <img alt="License" src="https://img.shields.io/badge/license-MIT-2ea44f">
 </p>
 
@@ -33,7 +33,8 @@ It does not add translation, summarization, AI prompts, or a system-wide screen 
 | Data manager | Search, delete, clear, import, and export highlights from the tray menu. |
 | Performance-aware | Incremental revision sync, indexed anchors, local observers, and idle-time re-anchoring. |
 | Literal text support | Highlights plain-text cards and syntax-highlighted code spanning multiple DOM nodes. |
-| Table support | Highlights native tables and ARIA grids with stable row/cell identities. |
+| Table support | Highlights native tables, ARIA grids, and CSS grid/div tables. |
+| Formula support | Highlights visible KaTeX formulas without anchoring to hidden MathML/TeX copies. |
 
 ## See it in action
 
@@ -55,7 +56,7 @@ Requirements: Windows 10 or 11 and the Codex desktop app.
 
 ### Install a release
 
-1. Download `codex-highlighter-v1.2.5-windows-x64.zip` from [GitHub Releases](https://github.com/andyxueanan-dot/codex-highlighter/releases/latest).
+1. Download `codex-highlighter-v1.2.6-windows-x64.zip` from [GitHub Releases](https://github.com/andyxueanan-dot/codex-highlighter/releases/latest).
 2. Extract the archive.
 3. Run `install.ps1` in PowerShell. The installer uses the current user account and does not require administrator access.
 

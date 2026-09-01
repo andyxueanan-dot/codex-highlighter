@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.2.6 - 2026-09-01
+
+- Add persistent highlighting for KaTeX display and inline formulas.
+- Anchor formula selections to the visible `.katex-html` layer instead of hidden MathML and TeX annotation copies.
+- Give formulas stable response/message identities with formula indexes and TeX fingerprints.
+- Keep partial visible-formula selections precise while normalizing accidental hidden-MathML selections to the visible formula.
+- Support CSS grid/div tables through Codex's stable response annotation identity when native table semantics are absent.
+- Add regression coverage for multi-node formulas, visible-layer CSS ranges, and full KaTeX DOM replacement.
+
 ## 1.2.5 - 2026-08-29
 
 - Remove every background path that could close or relaunch Codex after a CDP timeout or disconnect.
