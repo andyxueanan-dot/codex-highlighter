@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.2.7 - 2026-09-01
+
+- Show recolor/delete controls only when the current DOM selection actually intersects a visible, resolved highlight Range.
+- Ignore unresolved, disconnected, or stale anchors when deciding whether a selection is already highlighted.
+- Allow a new highlight to be added when old metadata overlaps the same offsets but has no visible range.
+- Replace metadata-only overlap guesses with strict live DOM range intersection.
+- Strengthen regression coverage for connected re-anchoring, adjacent selections, and unresolved stale-anchor collisions.
+
 ## 1.2.6 - 2026-09-01
 
 - Add persistent highlighting for KaTeX display and inline formulas.

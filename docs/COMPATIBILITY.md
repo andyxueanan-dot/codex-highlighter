@@ -4,6 +4,7 @@ Last verified: 2026-09-01
 
 | Platform | Codex Desktop | Chromium | Status | Evidence |
 | --- | --- | --- | --- | --- |
+| Windows 11 Pro x64, build 26200 | `26.825.6671.0` | `151.0.7922.174` | ✅ Verified | v1.2.7 ignores unresolved stale-anchor metadata for selection actions while preserving live overlap, formula, and table behavior. |
 | Windows 11 Pro x64, build 26200 | `26.825.6671.0` | `151.0.7922.174` | ✅ Verified | v1.2.6 full suite passed with visible-layer KaTeX and CSS-grid table re-anchoring after complete DOM replacement. |
 | Windows 11 Pro x64, build 26200 | `26.825.5331.0` | `151.0.7922.174` | ✅ Verified | v1.2.5 injected into the real app in 10.8 ms; native side-chat action and non-destructive background recovery regressions passed. |
 | Windows 11 Pro x64, build 26200 | `26.825.4187.0` | `151.0.7922.174` | ✅ Verified | v1.2.4 survived a Codex recovery restart as a WMI-owned interactive process, reinjected successfully, and reported a 7.5 ms latest palette response with 354 stored anchors. |
@@ -37,6 +38,7 @@ A verified row has passed all of the following on a real Codex installation:
 - launch independently through the Windows process service so a Codex account-switch restart does not terminate the tray monitor.
 - never close or relaunch Codex from background timeout/disconnect handling; restarts require an explicit tray action and confirmation.
 - allow Codex's native Add to conversation, Ask in side chat, and More actions to receive their pointer events without selection recapture.
+- expose recolor/delete only for connected, resolved DOM ranges that truly intersect the current selection.
 
 ## Codex update policy
 

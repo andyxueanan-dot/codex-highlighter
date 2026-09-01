@@ -517,12 +517,30 @@ function intersects(left, right) {
     await page.keyboard.press("Escape");
 
     await page.evaluate(() => {
-      document.querySelector("main article").outerHTML = `
-        <article data-message-id="message-1">
-          <p id="answer">Alpha beta gamma delta. Stable anchoring test.</p>
-        </article>`;
+      document.querySelector("#answer").outerHTML =
+        `<p id="answer">Alpha beta gamma delta. Stable anchoring test.</p>`;
     });
-    await page.waitForTimeout(450);
+    await page.waitForTimeout(3500);
+    const connectedRerenderRange = await page.evaluate(() => ({
+      ranges: Array.from(
+        CSS.highlights.get("codex-study-highlight-yellow") || [],
+      ).map((range) => ({
+        text: range.toString(),
+        connected: Boolean(range.startContainer?.isConnected),
+      })),
+      data: JSON.parse(window.__CODEX_HIGHLIGHTER__.exportData()).highlights,
+      diagnostics: window.__CODEX_HIGHLIGHTER__.diagnostics(),
+      articleText: document.querySelector("main article")?.textContent || "",
+    }));
+    if (
+      !connectedRerenderRange.ranges.some(
+        (range) => range.text === "beta gamma" && range.connected,
+      )
+    ) {
+      throw new Error(
+        `Original re-render did not produce a connected range: ${JSON.stringify(connectedRerenderRange)}`,
+      );
+    }
     const rerenderState = await page.evaluate(() => {
       const data = JSON.parse(window.__CODEX_HIGHLIGHTER__.exportData());
       const text = document.querySelector("main article")?.textContent || "";
@@ -547,12 +565,36 @@ function intersects(left, right) {
     }
 
     await selectText(page, "#answer", 6, 16);
-    await page.waitForFunction(
-      () =>
-        document
-          .querySelector("#codex-highlighter-toolbar-host")
-          ?.shadowRoot.querySelector("button.delete")?.style.display === "grid",
+    await page.waitForTimeout(200);
+    const overlapDebug = await page.evaluate(() => {
+      const resolved = Array.from(
+        CSS.highlights.get("codex-study-highlight-yellow") || [],
+      )[0];
+      const selected = getSelection().rangeCount
+        ? getSelection().getRangeAt(0)
+        : null;
+      return resolved && selected
+        ? {
+            endToStart: resolved.compareBoundaryPoints(Range.END_TO_START, selected),
+            startToEnd: resolved.compareBoundaryPoints(Range.START_TO_END, selected),
+            startToStart: resolved.compareBoundaryPoints(Range.START_TO_START, selected),
+            endToEnd: resolved.compareBoundaryPoints(Range.END_TO_END, selected),
+            sameRoot:
+              resolved.startContainer.getRootNode() ===
+              selected.startContainer.getRootNode(),
+            resolvedText: resolved.toString(),
+            selectedText: selected.toString(),
+          }
+        : null;
+    });
+    const overlapDeleteVisible = await page.evaluate(() =>
+      document
+        .querySelector("#codex-highlighter-toolbar-host")
+        ?.shadowRoot.querySelector("button.delete")?.style.display,
     );
+    if (overlapDeleteVisible !== "grid") {
+      throw new Error(`Resolved overlap was not detected: ${JSON.stringify(overlapDebug)}`);
+    }
     const deleteState = await page.evaluate(() => ({
       display: document
         .querySelector("#codex-highlighter-toolbar-host")
@@ -584,6 +626,71 @@ function intersects(left, right) {
       );
     }
     await clickSelectionDelete(page);
+    await page.waitForFunction(
+      () => window.__CODEX_HIGHLIGHTER__.health().count === 0,
+    );
+
+    await page.evaluate(() => {
+      const highlighter = window.__CODEX_HIGHLIGHTER__;
+      const state = highlighter.syncState();
+      highlighter.importData({
+        version: 1,
+        revision: state.revision + 1,
+        updatedAt: Date.now() + 10,
+        highlights: [
+          {
+            id: "unresolved-overlap-anchor",
+            contextKey: "about://blank",
+            scopeHash: "stale-hash",
+            scopeIdentity: "data-message-id:message-1",
+            scopeTag: "ARTICLE",
+            scopeLead: "Alpha beta gamma delta. Stable anchoring test.",
+            scopeTail: "Alpha beta gamma delta. Stable anchoring test.",
+            color: "yellow",
+            exact: "missing ghost text",
+            prefix: "Alpha ",
+            suffix: " delta.",
+            start: 6,
+            end: 16,
+            createdAt: Date.now() - 1000,
+          },
+        ],
+      });
+    });
+    await page.waitForFunction(
+      () =>
+        window.__CODEX_HIGHLIGHTER__.health().count === 1 &&
+        window.__CODEX_HIGHLIGHTER__.health().resolved === 0,
+    );
+    await selectText(page, "#answer", 6, 16);
+    const unresolvedDeleteVisible = await page.evaluate(() =>
+      document
+        .querySelector("#codex-highlighter-toolbar-host")
+        .shadowRoot.querySelector("button.delete").style.display,
+    );
+    if (unresolvedDeleteVisible !== "none") {
+      throw new Error("An unresolved stale anchor incorrectly exposed delete");
+    }
+    await clickColor(page, "yellow");
+    await page.waitForFunction(() => {
+      const highlighter = window.__CODEX_HIGHLIGHTER__;
+      const data = JSON.parse(highlighter.exportData());
+      return (
+        highlighter.health().count === 2 &&
+        highlighter.health().resolved === 1 &&
+        data.highlights.some((anchor) => anchor.exact === "beta gamma")
+      );
+    });
+    await page.evaluate(() => {
+      const highlighter = window.__CODEX_HIGHLIGHTER__;
+      const state = highlighter.syncState();
+      highlighter.importData({
+        version: 1,
+        revision: state.revision + 1,
+        updatedAt: Date.now() + 20,
+        highlights: [],
+      });
+    });
     await page.waitForFunction(
       () => window.__CODEX_HIGHLIGHTER__.health().count === 0,
     );

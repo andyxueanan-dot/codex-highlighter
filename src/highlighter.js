@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const VERSION = "1.2.6";
+  const VERSION = "1.2.7";
   const STATE_KEY = "__CODEX_HIGHLIGHTER__";
   const STORAGE_KEY = "codex-highlighter:data:v1";
   const STYLE_ID = "codex-highlighter-style";
@@ -823,43 +823,34 @@
   }
 
   function matchingAnchorIds(range) {
-    const probe = createAnchor(range);
-    if (!probe) return [];
-    return data.highlights
-      .filter((anchor) => {
+    const selected = normalizeFormulaRange(range);
+    if (!selected) return [];
+    const matching = [];
+    for (const [id, resolved] of resolvedRanges) {
+      if (
+        !resolved?.startContainer?.isConnected ||
+        !resolved?.endContainer?.isConnected
+      ) {
+        continue;
+      }
+      try {
         if (
-          anchor.contextKey &&
-          probe.contextKey &&
-          anchor.contextKey !== probe.contextKey
+          resolved.startContainer.getRootNode() !==
+          selected.startContainer.getRootNode()
         ) {
-          return false;
+          continue;
         }
-        const identityMatches =
-          anchor.scopeIdentity &&
-          probe.scopeIdentity &&
-          anchor.scopeIdentity === probe.scopeIdentity;
-        const hashMatches = anchor.scopeHash === probe.scopeHash;
-        const anchorLead = normalizeContext(anchor.scopeLead);
-        const probeLead = normalizeContext(probe.scopeLead);
-        const anchorTail = normalizeContext(anchor.scopeTail);
-        const probeTail = normalizeContext(probe.scopeTail);
-        const scopeContextMatches =
-          (anchorLead.length >= 8 && anchorLead === probeLead) ||
-          (anchorTail.length >= 8 && anchorTail === probeTail);
-        if (!identityMatches && !hashMatches && !scopeContextMatches) {
-          return false;
+        const endsAfterSelectionStarts =
+          resolved.compareBoundaryPoints(Range.END_TO_START, selected) < 0;
+        const startsBeforeSelectionEnds =
+          resolved.compareBoundaryPoints(Range.START_TO_END, selected) > 0;
+        if (endsAfterSelectionStarts && startsBeforeSelectionEnds) {
+          matching.push(id);
         }
-        const offsetsOverlap =
-          anchor.start < probe.end && probe.start < anchor.end;
-        const quoteMatches =
-          anchor.exact === probe.exact &&
-          normalizeContext(anchor.prefix).slice(-64) ===
-            normalizeContext(probe.prefix).slice(-64) &&
-          normalizeContext(anchor.suffix).slice(0, 64) ===
-            normalizeContext(probe.suffix).slice(0, 64);
-        return offsetsOverlap || quoteMatches;
-      })
-      .map((anchor) => anchor.id);
+      } catch {
+      }
+    }
+    return matching;
   }
 
   function hideToolbar() {
