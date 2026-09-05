@@ -35,6 +35,7 @@ if (-not $sourceExecutable) {
 
 $appDirectory = Join-Path $resolvedInstallRoot 'app'
 $targetExecutable = Join-Path $appDirectory 'CodexHighlighter.exe'
+$targetIcon = Join-Path $appDirectory 'codex-highlighter.ico'
 New-Item -ItemType Directory -Path $appDirectory -Force | Out-Null
 
 $running = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object {
@@ -54,6 +55,7 @@ foreach ($process in $running) {
 }
 
 Copy-Item -LiteralPath $sourceExecutable -Destination $targetExecutable -Force
+Copy-Item -LiteralPath (Join-Path $sourceRoot 'assets\codex-highlighter.ico') -Destination $targetIcon -Force
 Copy-Item -LiteralPath (Join-Path $sourceRoot 'uninstall.ps1') `
     -Destination (Join-Path $resolvedInstallRoot 'uninstall.ps1') -Force
 
@@ -75,6 +77,7 @@ function New-CodexHighlighterShortcut {
     $shortcut.Arguments = $Arguments
     $shortcut.WorkingDirectory = $appDirectory
     $shortcut.Description = 'Persistent text highlighting for Codex Desktop'
+    $shortcut.IconLocation = "$targetIcon,0"
     $shortcut.Save()
 }
 

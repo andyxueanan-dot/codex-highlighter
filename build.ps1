@@ -11,6 +11,7 @@ $sourceFiles = @(
     (Join-Path $projectRoot 'src\CodexLauncher.cs')
 )
 $scriptFile = Join-Path $projectRoot 'src\highlighter.js'
+$iconFile = Join-Path $projectRoot 'assets\codex-highlighter.ico'
 
 if (-not (Test-Path -LiteralPath $compiler)) {
     throw "Windows .NET Framework compiler was not found: $compiler"
@@ -25,6 +26,7 @@ $compilerArguments = @(
     '/optimize+'
     '/debug:pdbonly'
     "/out:$outputFile"
+    "/win32icon:$iconFile"
     '/reference:System.dll'
     '/reference:System.Core.dll'
     '/reference:System.Drawing.dll'

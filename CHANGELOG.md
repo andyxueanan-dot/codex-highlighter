@@ -2,6 +2,7 @@
 
 ## 1.2.8 - 2026-09-05
 
+- Add a custom dark highlighter icon, with 16–256 px frames for desktop and high-DPI Windows shortcuts.
 - Add a combined desktop/Start menu shortcut, `Codex（带高亮）`, that launches Codex with highlighting enabled from the first start.
 - Reuse the existing tray monitor via a session-local launch signal. Repeated opens no longer display an “already running” dialog.
 - Normal opens reuse an existing Codex window, even if it has no debugging port. They never restart it; startup watching remains passive.
