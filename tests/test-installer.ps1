@@ -23,12 +23,13 @@ try {
     $dataPath = Join-Path $resolvedTestRoot 'highlights.json'
     $testPrograms = Join-Path $resolvedTestRoot 'test-programs'
     $testStartup = Join-Path $resolvedTestRoot 'test-startup'
+    $testDesktop = Join-Path $resolvedTestRoot 'test-desktop'
     $sentinel = '{"test":"preserve-me"}'
     [IO.File]::WriteAllText($dataPath, $sentinel, [Text.UTF8Encoding]::new($false))
 
     & (Join-Path $projectRoot 'install.ps1') `
         -InstallRoot $resolvedTestRoot -NoStart `
-        -ProgramsDirectory $testPrograms -StartupDirectory $testStartup
+        -ProgramsDirectory $testPrograms -StartupDirectory $testStartup -DesktopDirectory $testDesktop
 
     $installedExecutable = Join-Path $resolvedTestRoot 'app\CodexHighlighter.exe'
     if (-not (Test-Path -LiteralPath $installedExecutable)) {
@@ -52,10 +53,31 @@ try {
     if ($startupLink.Arguments -ne '--startup') {
         throw 'Startup shortcut does not use background watch mode'
     }
+    foreach ($directory in @($testPrograms, $testDesktop)) {
+        $link = $shortcutShell.CreateShortcut((Join-Path $directory 'Codex（带高亮）.lnk'))
+        if ($link.Arguments -ne '--open-codex' -or $link.TargetPath -ne $installedExecutable) {
+            throw 'Combined launch shortcut must target the helper, not a version-specific Codex path'
+        }
+    }
+
+    & 'C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe' /nologo /target:winexe `
+        "/out:$installedExecutable" (Join-Path $projectRoot 'tests\InstallerHold.cs')
+    if ($LASTEXITCODE -ne 0) { throw 'Could not build running-installer fixture' }
+    $lockedFixture = Start-Process -FilePath $installedExecutable -WindowStyle Hidden -PassThru
+    & (Join-Path $projectRoot 'install.ps1') `
+        -InstallRoot $resolvedTestRoot -NoStart `
+        -ProgramsDirectory $testPrograms -StartupDirectory $testStartup -DesktopDirectory $testDesktop
+    if (-not $lockedFixture.WaitForExit(5000)) { throw 'Old app survived update' }
+    if ((Get-FileHash $installedExecutable).Hash -ne (Get-FileHash (Join-Path $projectRoot 'dist\CodexHighlighter.exe')).Hash) {
+        throw 'Updated executable does not match the new build'
+    }
+    if ((Get-Content -LiteralPath $dataPath -Raw) -ne $sentinel) {
+        throw 'Update modified existing highlight data'
+    }
 
     & (Join-Path $projectRoot 'uninstall.ps1') `
         -InstallRoot $resolvedTestRoot `
-        -ProgramsDirectory $testPrograms -StartupDirectory $testStartup
+        -ProgramsDirectory $testPrograms -StartupDirectory $testStartup -DesktopDirectory $testDesktop
 
     if (Test-Path -LiteralPath (Join-Path $resolvedTestRoot 'app')) {
         throw 'Default uninstall did not remove the app directory'
@@ -69,9 +91,14 @@ try {
     if (Test-Path -LiteralPath $startupShortcut) {
         throw 'Uninstaller did not remove the startup shortcut'
     }
+    foreach ($directory in @($testPrograms, $testDesktop)) {
+        if (Test-Path -LiteralPath (Join-Path $directory 'Codex（带高亮）.lnk')) {
+            throw 'Uninstaller did not remove the combined launch shortcut'
+        }
+    }
 
     & (Join-Path $projectRoot 'uninstall.ps1') `
-        -InstallRoot $resolvedTestRoot -NoShortcut -NoStartup -PurgeData
+        -InstallRoot $resolvedTestRoot -NoShortcut -NoStartup -NoDesktopShortcut -PurgeData
 
     if (Test-Path -LiteralPath $resolvedTestRoot) {
         throw 'Purge uninstall did not remove the test root'

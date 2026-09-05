@@ -49,6 +49,7 @@ if ($selfTestProcess.ExitCode -ne 0) {
 Get-Content -LiteralPath $selfTestOutput
 
 & (Join-Path $projectRoot 'tests\test-host-safety.ps1')
+& (Join-Path $projectRoot 'tests\test-launcher.ps1')
 & (Join-Path $projectRoot 'tests\test-installer.ps1')
 
 $previousNodePath = $env:NODE_PATH

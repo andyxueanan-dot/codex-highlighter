@@ -10,7 +10,7 @@ English | [简体中文](README.zh-CN.md)
 
 <p align="center">
   <img alt="Windows" src="https://img.shields.io/badge/Windows-10%20%7C%2011-0078D4?logo=windows">
-  <img alt="Version" src="https://img.shields.io/badge/version-1.2.7-ffca28">
+  <img alt="Version" src="https://img.shields.io/badge/version-1.2.8-ffca28">
   <img alt="License" src="https://img.shields.io/badge/license-MIT-2ea44f">
 </p>
 
@@ -56,9 +56,12 @@ Requirements: Windows 10 or 11 and the Codex desktop app.
 
 ### Install a release
 
-1. Download `codex-highlighter-v1.2.7-windows-x64.zip` from [GitHub Releases](https://github.com/andyxueanan-dot/codex-highlighter/releases/latest).
+1. Download the latest package from [GitHub Releases](https://github.com/andyxueanan-dot/codex-highlighter/releases/latest).
 2. Extract the archive.
 3. Run `install.ps1` in PowerShell. The installer uses the current user account and does not require administrator access.
+4. Open **Codex（带高亮）** from the desktop or Start menu. When Codex is closed, this starts it with highlighting in one step, avoiding a later restart.
+
+The shortcut reuses an existing tray monitor and resolves Codex's current install location after Store updates. Pass `-NoDesktopShortcut` to skip the desktop icon.
 
 ### Build from source
 
@@ -69,7 +72,7 @@ cd codex-highlighter
 .\Start-Codex-Highlighter.cmd
 ```
 
-1. Approve the one-time Codex restart when prompted.
+1. Run the launcher. It starts Codex with highlighting if closed, or reuses the existing window.
 2. Select text in the main transcript or side chat.
 3. Choose yellow, green, cyan, pink, or purple.
 4. Hover highlighted text and click the trash button to remove it.
@@ -82,11 +85,13 @@ Open the yellow tray icon and choose **Manage highlight data** to search records
 
 The installer also creates a current-user startup shortcut. It starts only the tray watcher at sign-in and waits quietly while Codex is closed. It reconnects automatically when Codex still has the highlighter's loopback debugging port; otherwise it waits for an explicit tray action.
 
-The installer starts the tray watcher independently through Windows, so restarting Codex or switching Codex accounts does not terminate it with the Codex process tree. The background watcher never closes or relaunches Codex. If Codex is later opened without the loopback debugging port, highlighting remains inactive until you choose **Connect or restart Codex (confirmation required)** from the tray menu and approve one controlled restart.
+The installer starts the tray watcher independently through Windows. Background watching never closes or relaunches Codex. An existing window started from the original Codex icon may lack the debugging port: close it normally when convenient and use **Codex（带高亮）** next time. For immediate connection you can choose **Connect or restart Codex (confirmation required)** in the tray menu; if Codex fails to exit gracefully the operation is canceled, never force-killed.
 
 ## How it works
 
 The helper launches Codex with a Chrome DevTools Protocol endpoint bound to `127.0.0.1`, then injects the highlighting runtime into the real Chromium renderer. Highlights use the CSS Highlights API, so the tool does not wrap or rewrite React-managed transcript nodes.
+
+This endpoint must be enabled at process startup. The combined shortcut supplies it on the first launch; the helper cannot retrofit it to an already-running ordinary window. Original Codex shortcuts and taskbar pins are left intact.
 
 Anchors include the exact quote, nearby text, position, message fingerprint, and page context. A mutation observer re-anchors highlights after virtualized or React-rendered content changes.
 

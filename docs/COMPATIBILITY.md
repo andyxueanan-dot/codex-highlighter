@@ -1,6 +1,8 @@
 # Compatibility matrix
 
-Last verified: 2026-09-01
+Last verified: 2026-09-05
+
+v1.2.8 launcher check on Codex `26.901.5280.0` / Chromium `152.0.7977.64`: two real launch requests reused the same monitor and Codex process; the installed renderer reported v1.2.8. All 1,232 pre-update highlight IDs remained in local storage. Cold-launch and missing-port paths passed isolated behavior tests; a real cold start was not forced during the active user session. Desktop/Start menu shortcuts, running-app update, and uninstall were tested in temporary directories.
 
 | Platform | Codex Desktop | Chromium | Status | Evidence |
 | --- | --- | --- | --- | --- |
@@ -18,7 +20,7 @@ Last verified: 2026-09-01
 
 ## What “verified” means
 
-A verified row has passed all of the following on a real Codex installation:
+The evidence column records what was tested on each build. The regression checklist includes browser fixtures and native tests; it is not a claim that every scenario was exercised in the real app on every build:
 
 - restart Codex with a loopback-only CDP endpoint;
 - inject and health-check the renderer runtime;

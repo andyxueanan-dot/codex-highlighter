@@ -7,17 +7,19 @@ using System.IO;
 using System.Net;
 using System.Net.Sockets;
 using System.Reflection;
+using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
 using System.Threading;
+using System.Threading.Tasks;
 using System.Web.Script.Serialization;
 using System.Windows.Forms;
 
 [assembly: AssemblyTitle("Codex Highlighter")]
 [assembly: AssemblyDescription("Persistent yellow text highlighting for the Codex desktop transcript")]
 [assembly: AssemblyProduct("Codex Highlighter")]
-[assembly: AssemblyVersion("1.2.7.0")]
-[assembly: AssemblyFileVersion("1.2.7.0")]
+[assembly: AssemblyVersion("1.2.8.0")]
+[assembly: AssemblyFileVersion("1.2.8.0")]
 
 namespace CodexHighlighter
 {
@@ -36,15 +38,12 @@ namespace CodexHighlighter
             }
 
             bool created;
+            using (LaunchRequestSignal launchRequest = new LaunchRequestSignal(LaunchRequestSignal.Name))
             using (Mutex mutex = new Mutex(true, MutexName, out created))
             {
                 if (!created)
                 {
-                    MessageBox.Show(
-                        "Codex Highlighter 已经在运行。请查看系统托盘中的黄色图标。",
-                        "Codex Highlighter",
-                        MessageBoxButtons.OK,
-                        MessageBoxIcon.Information);
+                    if (!HasArgument(args, "--startup")) launchRequest.Request();
                     return 0;
                 }
 
@@ -56,7 +55,7 @@ namespace CodexHighlighter
                     Application.EnableVisualStyles();
                     Application.SetCompatibleTextRenderingDefault(false);
                     Application.Run(new HighlighterApplicationContext(
-                        HasArgument(args, "--startup")));
+                        HasArgument(args, "--startup"), launchRequest));
                     Log.Write("Application exited normally");
                     return 0;
                 }
@@ -155,13 +154,15 @@ namespace CodexHighlighter
         private readonly System.Windows.Forms.Timer uiTimer;
         private readonly HighlighterHost host;
         private readonly bool startupMode;
+        private readonly LaunchRequestSignal launchRequest;
         private HighlightManagerForm managerForm;
         private bool connecting;
 
-        internal HighlighterApplicationContext(bool startInBackground)
+        internal HighlighterApplicationContext(bool startInBackground, LaunchRequestSignal request)
         {
             AppPaths.Ensure();
             startupMode = startInBackground;
+            launchRequest = request;
             host = new HighlighterHost();
 
             ContextMenuStrip menu = new ContextMenuStrip();
@@ -174,6 +175,8 @@ namespace CodexHighlighter
             ToolStripMenuItem exit = new ToolStripMenuItem("退出高亮器", null, OnExit);
             menu.Items.Add(statusItem);
             menu.Items.Add(new ToolStripSeparator());
+            menu.Items.Add(new ToolStripMenuItem("打开 Codex（带高亮）", null,
+                delegate { OpenCodex(); }));
             menu.Items.Add(reconnectItem);
             menu.Items.Add(reinjectItem);
             menu.Items.Add(manageData);
@@ -233,7 +236,35 @@ namespace CodexHighlighter
         {
             startupTimer.Stop();
             if (startupMode) host.StartWatching();
-            else ConnectInteractive();
+            else OpenCodex();
+        }
+
+        private async void OpenCodex()
+        {
+            if (connecting) return;
+            connecting = true;
+            reconnectItem.Enabled = false;
+            try
+            {
+                CodexOpenResult result = await Task.Run(() => host.OpenCodex());
+                Log.Write("Open Codex request completed: " + result);
+                if (result == CodexOpenResult.WaitingForNextLaunch)
+                {
+                    trayIcon.ShowBalloonTip(6000, "Codex 已打开",
+                        "当前窗口尚未启用高亮。下次正常退出后，从桌面“Codex（带高亮）”打开即可。",
+                        ToolTipIcon.Info);
+                }
+            }
+            catch (Exception exception)
+            {
+                Log.Write("Open Codex failed", exception);
+                trayIcon.ShowBalloonTip(6000, "无法打开 Codex", exception.Message, ToolTipIcon.Warning);
+            }
+            finally
+            {
+                connecting = false;
+                reconnectItem.Enabled = true;
+            }
         }
 
         private void ConnectInteractive()
@@ -321,6 +352,7 @@ namespace CodexHighlighter
 
         private void OnUiTick(object sender, EventArgs eventArgs)
         {
+            if (!connecting && launchRequest.Take()) OpenCodex();
             string status = host.Status;
             statusItem.Text = "状态：" + status;
             reinjectItem.Enabled = host.IsConnected;
@@ -347,11 +379,12 @@ namespace CodexHighlighter
 
     internal sealed class HighlighterHost : IDisposable
     {
-        private const string Version = "1.2.7";
+        private const string Version = "1.2.8";
         private const int DefaultPort = 9460;
         private const int HealthyMonitorInterval = 15000;
         private const int DisconnectedMonitorInterval = 5000;
         private readonly object statusGate = new object();
+        private readonly object connectionGate = new object();
         private readonly CdpClient cdp = new CdpClient();
         private readonly HighlightDataStore store = new HighlightDataStore();
         private readonly HashSet<string> initializedTargets = new HashSet<string>(StringComparer.Ordinal);
@@ -399,6 +432,11 @@ namespace CodexHighlighter
         }
 
         internal void EnsureConnected(bool interactive)
+        {
+            lock (connectionGate) EnsureConnectedCore(interactive);
+        }
+
+        private void EnsureConnectedCore(bool interactive)
         {
             ThrowIfDisposed();
             int existingPort = FindExistingPort();
@@ -476,6 +514,52 @@ namespace CodexHighlighter
                 SetStatus("等待 Codex 启动", false, false);
             }
             StartMonitor();
+        }
+
+        internal CodexOpenResult OpenCodex()
+        {
+            lock (connectionGate)
+            {
+                ThrowIfDisposed();
+                return CodexLauncher.Open(new LaunchTarget(this, CodexInstallLocator.Find()));
+            }
+        }
+
+        private sealed class LaunchTarget : ICodexLaunchTarget
+        {
+            private readonly HighlighterHost host;
+            private readonly string executable;
+            internal LaunchTarget(HighlighterHost host, string executable)
+            {
+                this.host = host;
+                this.executable = executable;
+            }
+            public int FindPort() { return host.FindExistingPort(); }
+            public bool IsRunning() { return CodexProcessManager.IsRunning(executable); }
+            public void Focus() { CodexProcessManager.Focus(executable); }
+            public void Attach(int value)
+            {
+                host.port = value;
+                SavePort(value);
+                host.SetStatus("正在连接 Codex", true, false);
+                host.StartMonitor();
+            }
+            public void LaunchAndWatch()
+            {
+                host.port = SelectFreePort(DefaultPort);
+                SavePort(host.port);
+                Log.Write("Opening Codex with highlighting on port " + host.port);
+                CodexProcessManager.Launch(executable, host.port);
+                host.SetStatus("正在等待 Codex 窗口", false, false);
+                host.StartMonitor();
+            }
+            public void WaitForNextLaunch()
+            {
+                host.port = ReadPort(AppPaths.PortFile);
+                if (host.port <= 0) host.port = DefaultPort;
+                host.SetStatus("当前 Codex 未启用高亮；下次请用桌面“Codex（带高亮）”", false, false);
+                host.StartMonitor();
+            }
         }
 
         private int FindExistingPort()
@@ -606,6 +690,12 @@ namespace CodexHighlighter
         private void MonitorTick(object state)
         {
             if (disposed || Interlocked.Exchange(ref monitorBusy, 1) != 0) return;
+            if (!Monitor.TryEnter(connectionGate))
+            {
+                Interlocked.Exchange(ref monitorBusy, 0);
+                ScheduleNextMonitor();
+                return;
+            }
             int attempt = Interlocked.Increment(ref monitorAttempts);
             try
             {
@@ -692,15 +782,18 @@ namespace CodexHighlighter
             }
             finally
             {
+                Monitor.Exit(connectionGate);
                 Interlocked.Exchange(ref monitorBusy, 0);
                 ScheduleNextMonitor();
             }
         }
 
-        private static bool IsMainRendererTarget(CdpTarget target)
+        internal static bool IsMainRendererTarget(CdpTarget target)
         {
             if (target == null || string.IsNullOrEmpty(target.Url)) return false;
-            if (!target.Url.StartsWith("app://", StringComparison.OrdinalIgnoreCase)) return false;
+            Uri url;
+            if (!Uri.TryCreate(target.Url, UriKind.Absolute, out url) ||
+                url.Scheme != "app" || url.Host != "-" || url.AbsolutePath != "/index.html") return false;
             return target.Url.IndexOf("initialRoute=%2Favatar-overlay",
                 StringComparison.OrdinalIgnoreCase) < 0 &&
                 target.Url.IndexOf("initialRoute=/avatar-overlay",
@@ -759,6 +852,19 @@ namespace CodexHighlighter
                 "高亮连接已中断；不会自动重启 Codex，可从托盘手动重连",
                 false,
                 false);
+            // Rediscover after a port change without relaunching either application.
+            if (failures == 1 || failures % 6 == 0)
+            {
+                int discovered = FindExistingPort();
+                if (discovered > 0 && discovered != port)
+                {
+                    port = discovered;
+                    SavePort(port);
+                    initializedTargets.Clear();
+                    consecutiveFailures = 0;
+                    Interlocked.Exchange(ref immediateMonitorRequested, 1);
+                }
+            }
         }
 
         internal void ForceReinject()
@@ -910,12 +1016,15 @@ namespace CodexHighlighter
             info.RedirectStandardError = true;
             using (Process process = Process.Start(info))
             {
-                string output = process.StandardOutput.ReadToEnd().Trim();
+                Task<string> outputTask = process.StandardOutput.ReadToEndAsync();
+                Task<string> errorTask = process.StandardError.ReadToEndAsync();
                 if (!process.WaitForExit(7000))
                 {
                     process.Kill();
                     return null;
                 }
+                string output = outputTask.Result.Trim();
+                errorTask.Wait();
                 return Directory.Exists(output) ? output : null;
             }
         }
@@ -923,9 +1032,16 @@ namespace CodexHighlighter
 
     internal static class CodexProcessManager
     {
+        [DllImport("user32.dll")]
+        private static extern bool SetForegroundWindow(IntPtr window);
+        [DllImport("user32.dll")]
+        private static extern bool IsIconic(IntPtr window);
+        [DllImport("user32.dll")]
+        private static extern bool ShowWindowAsync(IntPtr window, int command);
+
         internal static bool IsRunning(string executable)
         {
-            List<Process> roots = RootProcesses(executable);
+            List<Process> roots = MatchingProcesses(executable);
             bool running = roots.Count > 0;
             DisposeProcesses(roots);
             return running;
@@ -935,7 +1051,7 @@ namespace CodexHighlighter
         {
             List<Process> result = new List<Process>();
             string expected = Path.GetFullPath(executable);
-            foreach (Process process in Process.GetProcessesByName("ChatGPT"))
+            foreach (Process process in Process.GetProcessesByName(Path.GetFileNameWithoutExtension(expected)))
             {
                 try
                 {
@@ -980,6 +1096,22 @@ namespace CodexHighlighter
             foreach (Process process in processes) process.Dispose();
         }
 
+        internal static void Focus(string executable)
+        {
+            List<Process> roots = RootProcesses(executable);
+            try
+            {
+                foreach (Process process in roots)
+                {
+                    IntPtr window = process.MainWindowHandle;
+                    if (IsIconic(window)) ShowWindowAsync(window, 9);
+                    SetForegroundWindow(window);
+                    break;
+                }
+            }
+            finally { DisposeProcesses(roots); }
+        }
+
         internal static void Close(string executable)
         {
             List<Process> roots = RootProcesses(executable);
@@ -1005,48 +1137,8 @@ namespace CodexHighlighter
                 if (AllExited(rootIds)) return;
             }
 
-            Exception terminationError = null;
-            foreach (int processId in rootIds)
-            {
-                Process process = null;
-                try
-                {
-                    process = Process.GetProcessById(processId);
-                    if (!process.HasExited) process.Kill();
-                }
-                catch (ArgumentException)
-                {
-                    // The process no longer exists. That is success.
-                }
-                catch (InvalidOperationException)
-                {
-                    // The process exited between HasExited and Kill. That is success.
-                }
-                catch (System.ComponentModel.Win32Exception exception)
-                {
-                    terminationError = exception;
-                }
-                finally
-                {
-                    if (process != null) process.Dispose();
-                }
-            }
-
-            deadline = DateTime.UtcNow.AddSeconds(5);
-            while (DateTime.UtcNow < deadline)
-            {
-                Thread.Sleep(200);
-                if (AllExited(rootIds)) return;
-            }
-
-            if (terminationError != null)
-            {
-                throw new InvalidOperationException(
-                    "Windows 拒绝关闭 Codex 主窗口。请从 Codex 菜单退出应用，再从托盘重新连接。",
-                    terminationError);
-            }
             throw new InvalidOperationException(
-                "Codex 主窗口在 17 秒内没有退出。请手动退出 Codex，再从托盘重新连接。");
+                "Codex 尚未正常退出，已取消重连。请保存工作并手动关闭后，从“Codex（带高亮）”打开。");
         }
 
         private static bool AllExited(List<int> processIds)
@@ -1082,7 +1174,7 @@ namespace CodexHighlighter
             info.Arguments = "--remote-debugging-address=127.0.0.1 --remote-debugging-port=" + port;
             info.WorkingDirectory = Path.GetDirectoryName(executable);
             info.UseShellExecute = false;
-            Process.Start(info);
+            using (Process process = Process.Start(info)) { }
         }
     }
 
@@ -1110,7 +1202,7 @@ namespace CodexHighlighter
         {
             try
             {
-                return GetTargets(port).Count > 0;
+                return GetTargets(port).Exists(HighlighterHost.IsMainRendererTarget);
             }
             catch
             {

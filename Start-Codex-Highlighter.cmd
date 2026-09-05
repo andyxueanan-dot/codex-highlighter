@@ -7,5 +7,5 @@ if not exist "%APP%" (
   pause
   exit /b 1
 )
-start "Codex Highlighter" "%APP%"
+start "Codex Highlighter" "%APP%" --open-codex
 endlocal

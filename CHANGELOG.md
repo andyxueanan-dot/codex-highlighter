@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.2.8 - 2026-09-05
+
+- Add a combined desktop/Start menu shortcut, `Codex（带高亮）`, that launches Codex with highlighting enabled from the first start.
+- Reuse the existing tray monitor via a session-local launch signal. Repeated opens no longer display an “already running” dialog.
+- Normal opens reuse an existing Codex window, even if it has no debugging port. They never restart it; startup watching remains passive.
+- Detect already-starting processes before they have a main window and rediscover changed debugging ports without restarting.
+- Resolve the installed Codex path at launch time so the shortcut survives Store updates.
+- Cancel even a user-confirmed reconnect if Codex does not exit gracefully; remove the forced process termination fallback.
+- Wait for the old highlighter process to finish exiting before overwriting the executable during an update.
+- Add launcher behavior, endpoint identity, windowless process and shortcut lifecycle regression checks.
+
 ## 1.2.7 - 2026-09-01
 
 - Show recolor/delete controls only when the current DOM selection actually intersects a visible, resolved highlight Range.

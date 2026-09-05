@@ -8,6 +8,7 @@ $outputFile = Join-Path $outputDirectory 'CodexHighlighter.exe'
 $sourceFiles = @(
     (Join-Path $projectRoot 'src\CodexHighlighter.cs')
     (Join-Path $projectRoot 'src\HighlightManagerForm.cs')
+    (Join-Path $projectRoot 'src\CodexLauncher.cs')
 )
 $scriptFile = Join-Path $projectRoot 'src\highlighter.js'
 

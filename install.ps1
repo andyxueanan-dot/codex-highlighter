@@ -1,10 +1,12 @@
-param(
+﻿param(
     [string]$InstallRoot = (Join-Path $env:LOCALAPPDATA 'CodexHighlighter'),
     [switch]$NoStart,
     [switch]$NoShortcut,
     [switch]$NoStartup,
+    [switch]$NoDesktopShortcut,
     [string]$ProgramsDirectory = [Environment]::GetFolderPath('Programs'),
-    [string]$StartupDirectory = [Environment]::GetFolderPath('Startup')
+    [string]$StartupDirectory = [Environment]::GetFolderPath('Startup'),
+    [string]$DesktopDirectory = [Environment]::GetFolderPath('Desktop')
 )
 
 $ErrorActionPreference = 'Stop'
@@ -40,7 +42,15 @@ $running = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where
     [IO.Path]::GetFullPath($_.ExecutablePath).Equals($targetExecutable, [StringComparison]::OrdinalIgnoreCase)
 })
 foreach ($process in $running) {
-    Stop-Process -Id $process.ProcessId -Force -ErrorAction SilentlyContinue
+    $stoppedProcess = Stop-Process -Id $process.ProcessId -Force -PassThru -ErrorAction SilentlyContinue
+    if ($stoppedProcess) {
+        try {
+            if (-not $stoppedProcess.WaitForExit(5000)) {
+                throw 'The old highlighter did not exit; update canceled.'
+            }
+        }
+        finally { $stoppedProcess.Dispose() }
+    }
 }
 
 Copy-Item -LiteralPath $sourceExecutable -Destination $targetExecutable -Force
@@ -97,6 +107,16 @@ if (-not $NoShortcut) {
     New-Item -ItemType Directory -Path $ProgramsDirectory -Force | Out-Null
     New-CodexHighlighterShortcut `
         -Path (Join-Path $ProgramsDirectory 'Codex Highlighter.lnk')
+    New-CodexHighlighterShortcut `
+        -Path (Join-Path $ProgramsDirectory 'Codex（带高亮）.lnk') `
+        -Arguments '--open-codex'
+}
+
+if (-not $NoDesktopShortcut) {
+    New-Item -ItemType Directory -Path $DesktopDirectory -Force | Out-Null
+    New-CodexHighlighterShortcut `
+        -Path (Join-Path $DesktopDirectory 'Codex（带高亮）.lnk') `
+        -Arguments '--open-codex'
 }
 
 if (-not $NoStartup) {
@@ -109,6 +129,7 @@ if (-not $NoStartup) {
 Write-Output "Installed Codex Highlighter to: $targetExecutable"
 Write-Output "Saved highlights remain in: $(Join-Path $resolvedInstallRoot 'highlights.json')"
 if (-not $NoStartup) { Write-Output 'Enabled current-user startup recovery.' }
+if (-not $NoDesktopShortcut) { Write-Output "Launch shortcut: $(Join-Path $DesktopDirectory 'Codex（带高亮）.lnk')" }
 
 if (-not $NoStart) {
     Start-CodexHighlighterDetached

@@ -10,7 +10,7 @@
 
 <p align="center">
   <img alt="Windows" src="https://img.shields.io/badge/Windows-10%20%7C%2011-0078D4?logo=windows">
-  <img alt="Version" src="https://img.shields.io/badge/version-1.2.7-ffca28">
+  <img alt="Version" src="https://img.shields.io/badge/version-1.2.8-ffca28">
   <img alt="License" src="https://img.shields.io/badge/license-MIT-2ea44f">
 </p>
 
@@ -44,9 +44,12 @@ Codex Highlighter 为 Windows 版 Codex 桌面应用增加一个功能：在聊�
 
 ### 安装发布版
 
-1. 从 [GitHub Releases](https://github.com/andyxueanan-dot/codex-highlighter/releases/latest) 下载 `codex-highlighter-v1.2.7-windows-x64.zip`。
+1. 从 [GitHub Releases](https://github.com/andyxueanan-dot/codex-highlighter/releases/latest) 下载最新发布包。
 2. 解压后在 PowerShell 中运行 `install.ps1`。
 3. 安装器使用当前用户目录，不需要管理员权限。
+4. 以后从桌面或开始菜单的 **Codex（带高亮）** 打开。Codex 关闭时会一次性启动应用并启用高亮，无需先打开 Codex 再重启。
+
+高亮器已在托盘运行也可以直接点这个入口，它会复用已有程序。Codex 更新后会自动查找新版安装位置。
 
 ### 从源码构建
 
@@ -57,7 +60,7 @@ cd codex-highlighter
 .\Start-Codex-Highlighter.cmd
 ```
 
-1. 第一次启用时，程序会询问是否重启 Codex。选择“是”。
+1. 运行启动入口；Codex 关闭时会直接带高亮启动，已打开时会复用当前窗口。
 2. 在 Codex 主对话或右侧对话中选中文字。
 3. 在选区下方选择黄、绿、青、粉、紫任一颜色。
 4. 鼠标悬停高亮文字，点击垃圾桶即可删除。
@@ -70,20 +73,22 @@ cd codex-highlighter
 
 安装器还会创建当前用户的开机启动快捷方式。Windows 登录时只启动托盘监控，不会主动弹出 Codex。Codex 仍带有高亮器的本机调试端口时会自动重连；如果端口不存在，则等待你从托盘明确操作。
 
-安装器会通过 Windows 独立启动托盘监控，因此重启 Codex 或切换 Codex 账号时，不会再把高亮器作为 Codex 的从属进程一同关闭。后台监控绝不会自行关闭或重启 Codex。如果之后打开的 Codex 没有本机调试端口，高亮会暂时停用；只有你从托盘选择“连接或重启 Codex（需确认）”并明确同意后，才会执行一次受控重启。
+安装器会通过 Windows 独立启动托盘监控。后台监控不会自行关闭或重启 Codex。如果先从官方原入口打开，当前窗口可能没有高亮所需的连接：下次正常退出后，改用 **Codex（带高亮）** 即可。需要立即恢复时，也可从托盘选择“连接或重启 Codex（需确认）”；即使已确认，Codex 未正常退出时也会取消，不强制结束进程。
 
 颜色工具条会优先显示在选区下方，并避开 Codex 自带的“添加到对话”“更多”和“在侧边聊天中提问”菜单。程序运行后位于 Windows 系统托盘。退出托盘程序会立即撤掉当前页面上的高亮，但保留数据；下次启动后会恢复。
 
-## 为什么第一次需要重启 Codex
+## 为什么需要专用启动入口
 
 Codex 没有向普通插件开放聊天正文的选区和样式接口。本工具让 Codex 以仅绑定 `127.0.0.1` 的 Chrome DevTools Protocol 端口启动，再把高亮脚本注入真实的 Chromium 文本页面。
+
+该端口需要在 Codex 启动时开启，无法通过本工具给已经启动的普通窗口补上。专用入口让它从第一次打开就具备连接条件；官方原入口和任务栏图标不会被自动替换。安装时可用 `-NoDesktopShortcut` 跳过桌面图标。
 
 它不会修改：
 
 - Codex 官方安装目录或 `app.asar`
 - Codex 代码签名
 - 登录状态、API 配置或任务数据
-- 注册表、计划任务或开机启动项
+- 注册表或计划任务（只创建本工具的桌面、开始菜单和登录启动快捷方式）
 
 ## 持久化与稳定性
 

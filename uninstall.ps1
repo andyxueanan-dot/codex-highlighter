@@ -1,10 +1,12 @@
-param(
+﻿param(
     [string]$InstallRoot = (Join-Path $env:LOCALAPPDATA 'CodexHighlighter'),
     [switch]$PurgeData,
     [switch]$NoShortcut,
     [switch]$NoStartup,
+    [switch]$NoDesktopShortcut,
     [string]$ProgramsDirectory = [Environment]::GetFolderPath('Programs'),
-    [string]$StartupDirectory = [Environment]::GetFolderPath('Startup')
+    [string]$StartupDirectory = [Environment]::GetFolderPath('Startup'),
+    [string]$DesktopDirectory = [Environment]::GetFolderPath('Desktop')
 )
 
 $ErrorActionPreference = 'Stop'
@@ -38,9 +40,20 @@ if (Test-Path -LiteralPath $appDirectory) {
 }
 
 if (-not $NoShortcut) {
+    $combinedShortcut = Join-Path $ProgramsDirectory 'Codex（带高亮）.lnk'
+    if (Test-Path -LiteralPath $combinedShortcut) {
+        Remove-Item -LiteralPath $combinedShortcut -Force
+    }
     $shortcutPath = Join-Path $ProgramsDirectory 'Codex Highlighter.lnk'
     if (Test-Path -LiteralPath $shortcutPath) {
         Remove-Item -LiteralPath $shortcutPath -Force
+    }
+}
+
+if (-not $NoDesktopShortcut) {
+    $desktopShortcut = Join-Path $DesktopDirectory 'Codex（带高亮）.lnk'
+    if (Test-Path -LiteralPath $desktopShortcut) {
+        Remove-Item -LiteralPath $desktopShortcut -Force
     }
 }
 
