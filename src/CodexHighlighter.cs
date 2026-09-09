@@ -18,8 +18,8 @@ using System.Windows.Forms;
 [assembly: AssemblyTitle("Codex Highlighter")]
 [assembly: AssemblyDescription("Persistent yellow text highlighting for the Codex desktop transcript")]
 [assembly: AssemblyProduct("Codex Highlighter")]
-[assembly: AssemblyVersion("1.2.8.0")]
-[assembly: AssemblyFileVersion("1.2.8.0")]
+[assembly: AssemblyVersion("1.2.9.0")]
+[assembly: AssemblyFileVersion("1.2.9.0")]
 
 namespace CodexHighlighter
 {
@@ -379,7 +379,7 @@ namespace CodexHighlighter
 
     internal sealed class HighlighterHost : IDisposable
     {
-        private const string Version = "1.2.8";
+        private const string Version = "1.2.9";
         private const int DefaultPort = 9460;
         private const int HealthyMonitorInterval = 15000;
         private const int DisconnectedMonitorInterval = 5000;
@@ -747,6 +747,16 @@ namespace CodexHighlighter
                             "Highlighter renderer state was unavailable after injection.");
                     }
 
+                    if (!string.IsNullOrEmpty(renderer.RetentionBackupId))
+                    {
+                        string backup = cdp.Evaluate(target,
+                            "window.__CODEX_HIGHLIGHTER__?.exportRetentionBackup?.() || ''") as string;
+                        string id = store.SaveRetentionBackup(backup);
+                        // Acknowledge only the exact batch successfully saved to disk.
+                        cdp.Evaluate(target, "window.__CODEX_HIGHLIGHTER__?.acknowledgeRetentionBackup?.(" +
+                            Json.CreateSerializer().Serialize(id) + ")");
+                    }
+
                     if (bestStamp.Valid && IsFileNewer(bestStamp, renderer))
                     {
                         string quoted = Json.CreateSerializer().Serialize(bestData);
@@ -821,6 +831,8 @@ namespace CodexHighlighter
                 state.Count = value.ContainsKey("count")
                     ? Convert.ToInt32(value["count"])
                     : 0;
+                state.RetentionBackupId = value.ContainsKey("retentionBackupId")
+                    ? Convert.ToString(value["retentionBackupId"]) : string.Empty;
                 return state;
             }
             catch
@@ -1188,6 +1200,7 @@ namespace CodexHighlighter
 
     internal sealed class RendererSyncState
     {
+        internal string RetentionBackupId;
         internal string Version;
         internal long Revision;
         internal long UpdatedAt;
@@ -1577,6 +1590,37 @@ namespace CodexHighlighter
     internal sealed class HighlightDataStore
     {
         private readonly object gate = new object();
+        private readonly string retentionDirectory;
+
+        internal HighlightDataStore() : this(Path.Combine(AppPaths.Root, "backups", "auto-prune")) { }
+        internal HighlightDataStore(string retentionDirectory) { this.retentionDirectory = retentionDirectory; }
+
+        internal string SaveRetentionBackup(string value)
+        {
+            DataStamp stamp = Stamp(value);
+            if (!stamp.Valid || stamp.Count != 1000)
+                throw new InvalidDataException("自动清理备份必须包含 1000 条高亮。");
+            var root = Json.CreateSerializer().DeserializeObject(value) as Dictionary<string, object>;
+            string id = root.ContainsKey("id") ? Convert.ToString(root["id"]) : string.Empty;
+            if (!System.Text.RegularExpressions.Regex.IsMatch(id, @"\Aauto-prune-[0-9]+-[a-z0-9]{1,16}\z"))
+                throw new InvalidDataException("自动清理备份 ID 无效。");
+            lock (gate)
+            {
+                Directory.CreateDirectory(retentionDirectory);
+                string path = Path.Combine(retentionDirectory, id + ".json");
+                if (File.Exists(path))
+                {
+                    if (File.ReadAllText(path, Encoding.UTF8) != value)
+                        throw new InvalidDataException("自动清理备份 ID 冲突，保留原备份。");
+                    return id;
+                }
+                string temp = path + ".tmp";
+                File.WriteAllText(temp, value, new UTF8Encoding(false));
+                File.Move(temp, path);
+                Log.Write("Saved automatic retention backup: " + path);
+                return id;
+            }
+        }
 
         internal string Load()
         {

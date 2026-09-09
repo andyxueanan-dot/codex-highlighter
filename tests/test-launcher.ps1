@@ -8,7 +8,8 @@ $testExe = Join-Path $projectRoot 'dist\LauncherTests.exe'
     (Join-Path $projectRoot 'src\CodexLauncher.cs') `
     (Join-Path $projectRoot 'src\CodexHighlighter.cs') `
     (Join-Path $projectRoot 'src\HighlightManagerForm.cs') `
-    (Join-Path $projectRoot 'tests\LauncherTests.cs')
+    (Join-Path $projectRoot 'tests\LauncherTests.cs') `
+    (Join-Path $projectRoot 'tests\RetentionTests.cs')
 if ($LASTEXITCODE -ne 0) { throw 'Launcher test compilation failed' }
 & $testExe
 if ($LASTEXITCODE -ne 0) { throw 'Launcher behavior tests failed' }

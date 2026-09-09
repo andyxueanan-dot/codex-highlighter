@@ -99,6 +99,7 @@ namespace CodexHighlighter
                 CheckEndpoint("https://example.test", false);
                 CheckEndpoint("app://unrelated/index.html", false);
                 Console.WriteLine("PASS Codex endpoint identity");
+                RetentionTests.Run();
                 return 0;
             }
             catch (Exception exception) { Console.Error.WriteLine(exception); return 1; }

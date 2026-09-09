@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const VERSION = "1.2.8";
+  const VERSION = "1.2.9";
   const STATE_KEY = "__CODEX_HIGHLIGHTER__";
   const STORAGE_KEY = "codex-highlighter:data:v1";
   const STYLE_ID = "codex-highlighter-style";
@@ -16,6 +16,8 @@
     purple: { label: "紫色", value: "rgba(155, 93, 229, 0.64)" },
   };
   const MAX_HIGHLIGHTS = 2000;
+  const RETENTION_BATCH_SIZE = 1000;
+  const RETENTION_BACKUP_KEY = "codex-highlighter:pending-retention-backup:v1";
   const MAX_SELECTION_LENGTH = 5000;
   const EDITABLE_SELECTOR =
     "input,textarea,select,[contenteditable='true'],[contenteditable='']," +
@@ -72,6 +74,88 @@
   let initialFullScan = true;
   let disposed = false;
   const resolvedRanges = new Map();
+  let noticeTimer = 0;
+
+  function retentionNotice(message) {
+    let notice = document.getElementById("codex-highlighter-notice");
+    if (!notice) {
+      notice = document.createElement("div");
+      notice.id = "codex-highlighter-notice";
+      notice.setAttribute("role", "status");
+      notice.style.cssText = "position:fixed;right:20px;bottom:24px;z-index:2147483646;" +
+        "background:#262b32;color:white;padding:12px 16px;border-radius:12px;" +
+        "font:14px/1.5 sans-serif;max-width:360px;pointer-events:none;";
+      document.body.appendChild(notice);
+    }
+    notice.textContent = message;
+    clearTimeout(noticeTimer);
+    noticeTimer = setTimeout(() => notice.remove(), 6000);
+  }
+
+  function exportRetentionBackup() {
+    return localStorage.getItem(RETENTION_BACKUP_KEY) || "";
+  }
+
+  function pendingRetentionBackupId() {
+    try { return JSON.parse(exportRetentionBackup())?.id || ""; }
+    catch { return ""; }
+  }
+
+  function acknowledgeRetentionBackup(id) {
+    if (!id || pendingRetentionBackupId() !== id) return false;
+    localStorage.removeItem(RETENTION_BACKUP_KEY);
+    return true;
+  }
+
+  function addWithRetention(anchor) {
+    // Another Codex window may already have rolled over this shared store.
+    try {
+      const saved = sanitizeData(JSON.parse(localStorage.getItem(STORAGE_KEY)));
+      if (saved && (saved.updatedAt > data.updatedAt ||
+          (saved.updatedAt === data.updatedAt && saved.revision > data.revision))) {
+        data = saved;
+      }
+    } catch {}
+    if (data.highlights.length + 1 < MAX_HIGHLIGHTS) {
+      data.highlights.push(anchor);
+      markChanged();
+      return true;
+    }
+    try {
+      // Never overwrite a batch that the native host has not yet archived.
+      if (exportRetentionBackup()) {
+        retentionNotice("上一批高亮备份尚未写入本地，请稍后再试或启动高亮器。");
+        return false;
+      }
+      const oldest = data.highlights.map((item, index) => ({ item, index }))
+        .sort((a, b) => a.item.createdAt - b.item.createdAt || a.index - b.index)
+        .slice(0, RETENTION_BATCH_SIZE).map(({ item }) => item);
+      const removedIds = new Set(oldest.map((item) => item.id));
+      const now = Date.now();
+      const backup = {
+        version: 1,
+        id: `auto-prune-${now}-${Math.random().toString(36).slice(2, 10)}`,
+        revision: data.revision,
+        updatedAt: now,
+        highlights: oldest,
+      };
+      // Both writes must succeed before changing the in-memory active document.
+      localStorage.setItem(RETENTION_BACKUP_KEY, JSON.stringify(backup));
+      const next = {
+        ...data,
+        revision: data.revision + 1,
+        updatedAt: Math.max(now, data.updatedAt + 1),
+        highlights: [...data.highlights.filter((item) => !removedIds.has(item.id)), anchor],
+      };
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+      data = next;
+      retentionNotice("已自动清理最早的 1,000 条高亮，备份已保留。");
+      return true;
+    } catch {
+      retentionNotice("无法保存高亮清理备份，未执行清理。请检查本地存储空间后重试。");
+      return false;
+    }
+  }
   const performanceStats = {
     applyCount: 0,
     lastApplyMs: 0,
@@ -1011,11 +1095,10 @@
         if (matching.has(anchor.id)) anchor.color = color;
       }
       markChanged();
-    } else if (data.highlights.length < MAX_HIGHLIGHTS) {
+    } else {
       const anchor = createAnchor(pendingRange, color);
       if (anchor) {
-        data.highlights.push(anchor);
-        markChanged();
+        addWithRetention(anchor);
       }
     }
     finishSelectionAction();
@@ -1366,6 +1449,7 @@
       revision: data.revision,
       updatedAt: data.updatedAt,
       count: data.highlights.length,
+      retentionBackupId: pendingRetentionBackupId(),
     };
   }
 
@@ -1439,6 +1523,8 @@
   function cleanup() {
     if (disposed) return true;
     disposed = true;
+    clearTimeout(noticeTimer);
+    document.getElementById("codex-highlighter-notice")?.remove();
     document.removeEventListener("pointerdown", onPointerDown, true);
     document.removeEventListener("pointerup", onPointerUp, true);
     document.removeEventListener("pointermove", onPointerMove, true);
@@ -1502,6 +1588,8 @@
     diagnostics,
     importData,
     exportData,
+    exportRetentionBackup,
+    acknowledgeRetentionBackup,
   };
   ensure();
   return health();

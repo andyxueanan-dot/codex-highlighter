@@ -10,7 +10,7 @@
 
 <p align="center">
   <img alt="Windows" src="https://img.shields.io/badge/Windows-10%20%7C%2011-0078D4?logo=windows">
-  <img alt="Version" src="https://img.shields.io/badge/version-1.2.8-ffca28">
+  <img alt="Version" src="https://img.shields.io/badge/version-1.2.9-ffca28">
   <img alt="License" src="https://img.shields.io/badge/license-MIT-2ea44f">
 </p>
 
@@ -91,6 +91,10 @@ Codex 没有向普通插件开放聊天正文的选区和样式接口。本工�
 - 注册表或计划任务（只创建本工具的桌面、开始菜单和登录启动快捷方式）
 
 ## 持久化与稳定性
+
+采用滚动清理：新增高亮使总数达到 2,000 条时，自动备份并删除创建时间最早的 1,000 条。已满 2,000 条的旧数据会在下一次新增时清理，留下 1,001 条；启动、导入、改色和手动删除不触发清理。备份或保存失败时保留原数据。
+
+清理备份存放在 `%LOCALAPPDATA%\CodexHighlighter\backups\auto-prune`，不会参与页面扫描。备份文件会累计保留，不自动删除。
 
 高亮数据保存在：
 

@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.2.9 - 2026-09-09
+
+- When adding a highlight reaches the 2,000-record limit, archive and remove the oldest 1,000 records by creation time before saving the new selection.
+- Loading, importing, recoloring and manual deletion do not trigger automatic retention. Already-full stores roll over on the next successful new selection.
+- Save the removed records in browser storage before changing active data; the native monitor copies the batch to `backups/auto-prune` and acknowledges it only after writing the JSON file.
+- Preserve the previous batch until acknowledged. Storage failures cancel pruning instead of discarding records.
+- Add retention boundary, oldest-first, reload, backup failure, disk retry and recolor regressions.
+
 ## 1.2.8 - 2026-09-05
 
 - Add a custom dark highlighter icon, with 16–256 px frames for desktop and high-DPI Windows shortcuts.
