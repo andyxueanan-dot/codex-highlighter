@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.2.10 - 2026-09-11
+
+- Fix retention blocked by page-storage quota: queue the requested selection in memory, write the removed batch to disk via the native host, and only then commit the smaller active list.
+- Cancel stale retention commits after intervening edits. Interrupted requests leave old records intact; legacy pending backups are drained without deleting twice.
+- Transfer active documents and backups in bounded 32,768-character chunks with immutable export snapshots and surrogate-safe boundaries, avoiding the 4 MiB WebSocket message limit.
+- Keep existing backups and all Codex processes intact during the update.
+
 ## 1.2.9 - 2026-09-09
 
 - When adding a highlight reaches the 2,000-record limit, archive and remove the oldest 1,000 records by creation time before saving the new selection.

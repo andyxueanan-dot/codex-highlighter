@@ -18,8 +18,8 @@ using System.Windows.Forms;
 [assembly: AssemblyTitle("Codex Highlighter")]
 [assembly: AssemblyDescription("Persistent yellow text highlighting for the Codex desktop transcript")]
 [assembly: AssemblyProduct("Codex Highlighter")]
-[assembly: AssemblyVersion("1.2.9.0")]
-[assembly: AssemblyFileVersion("1.2.9.0")]
+[assembly: AssemblyVersion("1.2.10.0")]
+[assembly: AssemblyFileVersion("1.2.10.0")]
 
 namespace CodexHighlighter
 {
@@ -379,7 +379,7 @@ namespace CodexHighlighter
 
     internal sealed class HighlighterHost : IDisposable
     {
-        private const string Version = "1.2.9";
+        private const string Version = "1.2.10";
         private const int DefaultPort = 9460;
         private const int HealthyMonitorInterval = 15000;
         private const int DisconnectedMonitorInterval = 5000;
@@ -749,26 +749,22 @@ namespace CodexHighlighter
 
                     if (!string.IsNullOrEmpty(renderer.RetentionBackupId))
                     {
-                        string backup = cdp.Evaluate(target,
-                            "window.__CODEX_HIGHLIGHTER__?.exportRetentionBackup?.() || ''") as string;
+                        string backup = cdp.ReadDocument(target, "retention");
                         string id = store.SaveRetentionBackup(backup);
                         // Acknowledge only the exact batch successfully saved to disk.
                         cdp.Evaluate(target, "window.__CODEX_HIGHLIGHTER__?.acknowledgeRetentionBackup?.(" +
                             Json.CreateSerializer().Serialize(id) + ")");
+                        renderer = ReadRendererSyncState(target) ?? renderer;
                     }
 
                     if (bestStamp.Valid && IsFileNewer(bestStamp, renderer))
                     {
-                        string quoted = Json.CreateSerializer().Serialize(bestData);
-                        cdp.Evaluate(target,
-                            "window.__CODEX_HIGHLIGHTER__?.importData(" + quoted + ")");
+                        cdp.WriteDocument(target, bestData);
                         renderer = ReadRendererSyncState(target) ?? renderer;
                     }
                     else if (!bestStamp.Valid || IsRendererNewer(renderer, bestStamp))
                     {
-                        object exportedValue = cdp.Evaluate(target,
-                            "window.__CODEX_HIGHLIGHTER__?.exportData?.() || ''");
-                        string exported = exportedValue as string;
+                        string exported = cdp.ReadDocument(target, "data");
                         string newer = store.Newer(bestData, exported);
                         if (!string.Equals(newer, bestData, StringComparison.Ordinal))
                         {
@@ -1268,6 +1264,51 @@ namespace CodexHighlighter
         private static string Value(Dictionary<string, object> dictionary, string key)
         {
             return dictionary.ContainsKey(key) ? Convert.ToString(dictionary[key]) : string.Empty;
+        }
+
+        internal string ReadDocument(CdpTarget target, string kind)
+        {
+            var meta = Evaluate(target, "window.__CODEX_HIGHLIGHTER__.beginExport(" +
+                Json.CreateSerializer().Serialize(kind) + ")") as Dictionary<string, object>;
+            if (meta == null) throw new InvalidDataException("Missing export transfer");
+            string id = Json.CreateSerializer().Serialize(Convert.ToString(meta["id"]));
+            int length = Convert.ToInt32(meta["length"]);
+            try
+            {
+                if (length < 0 || length > 5 * 1024 * 1024) throw new InvalidDataException("Export too large");
+                var result = new StringBuilder(length);
+                for (int offset = 0; offset < length; )
+                {
+                    string part = Evaluate(target, "window.__CODEX_HIGHLIGHTER__.readExportChunk(" + id + "," + offset + ")") as string;
+                    if (string.IsNullOrEmpty(part) || part.Length > Math.Min(32768, length - offset))
+                        throw new InvalidDataException("Incomplete export chunk");
+                    result.Append(part);
+                    offset += part.Length;
+                }
+                return result.ToString();
+            }
+            finally { try { Evaluate(target, "window.__CODEX_HIGHLIGHTER__.endExport(" + id + ")"); } catch { } }
+        }
+
+        internal void WriteDocument(CdpTarget target, string value)
+        {
+            if (value.Length > 5 * 1024 * 1024) throw new InvalidDataException("Import too large");
+            string id = Json.CreateSerializer().Serialize(Convert.ToString(Evaluate(target,
+                "window.__CODEX_HIGHLIGHTER__.beginImport()")));
+            try
+            {
+                for (int offset = 0; offset < value.Length; )
+                {
+                    int count = Math.Min(32768, value.Length - offset);
+                    if (offset + count < value.Length && char.IsHighSurrogate(value[offset + count - 1])) count--;
+                    string part = value.Substring(offset, count);
+                    Evaluate(target, "window.__CODEX_HIGHLIGHTER__.appendImportChunk(" + id + "," + offset + "," +
+                        Json.CreateSerializer().Serialize(part) + ")");
+                    offset += count;
+                }
+                Evaluate(target, "window.__CODEX_HIGHLIGHTER__.finishImport(" + id + ")");
+            }
+            finally { try { Evaluate(target, "window.__CODEX_HIGHLIGHTER__.abortImport(" + id + ")"); } catch { } }
         }
 
         internal object Evaluate(CdpTarget target, string expression)

@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const VERSION = "1.2.9";
+  const VERSION = "1.2.10";
   const STATE_KEY = "__CODEX_HIGHLIGHTER__";
   const STORAGE_KEY = "codex-highlighter:data:v1";
   const STYLE_ID = "codex-highlighter-style";
@@ -75,6 +75,11 @@
   let disposed = false;
   const resolvedRanges = new Map();
   let noticeTimer = 0;
+  let pendingRetention = null;
+  let exportBuffer = null;
+  let importBuffer = null;
+  const TRANSFER_CHARS = 32768;
+  const MAX_DOCUMENT_CHARS = 5 * 1024 * 1024;
 
   function retentionNotice(message) {
     let notice = document.getElementById("codex-highlighter-notice");
@@ -93,6 +98,7 @@
   }
 
   function exportRetentionBackup() {
+    if (pendingRetention) return pendingRetention.serialized;
     return localStorage.getItem(RETENTION_BACKUP_KEY) || "";
   }
 
@@ -103,9 +109,82 @@
 
   function acknowledgeRetentionBackup(id) {
     if (!id || pendingRetentionBackupId() !== id) return false;
+    if (pendingRetention) {
+      const pending = pendingRetention;
+      const saved = sanitizeData(JSON.parse(localStorage.getItem(STORAGE_KEY)));
+      if (saved && (saved.updatedAt > data.updatedAt ||
+          (saved.updatedAt === data.updatedAt && saved.revision > data.revision))) data = saved;
+      // A different window or edit superseded this selection while disk I/O was pending.
+      if (data.revision !== pending.revision || data.updatedAt !== pending.updatedAt) {
+        pendingRetention = null;
+        retentionNotice("备份已保存；记录期间发生变化，请重新划选以安全清理。");
+        return false;
+      }
+      const removed = new Set(pending.backup.highlights.map((item) => item.id));
+      const next = {
+        ...data, revision: data.revision + 1,
+        updatedAt: Math.max(Date.now(), data.updatedAt + 1),
+        highlights: [...data.highlights.filter((item) => !removed.has(item.id)),
+          ...(pending.anchor ? [pending.anchor] : [])],
+      };
+      try { localStorage.setItem(STORAGE_KEY, JSON.stringify(next)); }
+      catch (error) {
+        retentionNotice(`硬盘备份已保存，但写入当前高亮失败（${error.name}），原记录保留。`);
+        return false;
+      }
+      data = next;
+      pendingRetention = null;
+      scheduleApply(0);
+      retentionNotice("已清理最早的 1,000 条高亮，硬盘备份已保存。");
+      return true;
+    }
+    // Drain an unacknowledged backup left by v1.2.9 without pruning again.
     localStorage.removeItem(RETENTION_BACKUP_KEY);
     return true;
   }
+
+  function beginExport(kind) {
+    const serialized = kind === "retention" ? exportRetentionBackup() : exportData();
+    if (serialized.length > MAX_DOCUMENT_CHARS) throw new Error("Document too large");
+    const id = `${Date.now()}-${Math.random()}`;
+    exportBuffer = { id, serialized };
+    return { id, length: serialized.length };
+  }
+
+  function readExportChunk(id, offset) {
+    if (!exportBuffer || exportBuffer.id !== id || !Number.isInteger(offset) || offset < 0)
+      throw new Error("Invalid export transfer");
+    const source = exportBuffer.serialized;
+    let end = Math.min(source.length, offset + TRANSFER_CHARS);
+    const last = source.charCodeAt(end - 1);
+    if (end < source.length && last >= 0xd800 && last <= 0xdbff) end--;
+    return source.slice(offset, end);
+  }
+
+  function endExport(id) { if (exportBuffer?.id === id) exportBuffer = null; }
+
+  function beginImport() {
+    const id = `${Date.now()}-${Math.random()}`;
+    importBuffer = { id, chunks: [], length: 0 };
+    return id;
+  }
+
+  function appendImportChunk(id, offset, chunk) {
+    if (!importBuffer || importBuffer.id !== id || offset !== importBuffer.length ||
+        typeof chunk !== "string" || chunk.length > TRANSFER_CHARS ||
+        offset + chunk.length > MAX_DOCUMENT_CHARS) throw new Error("Invalid import transfer");
+    importBuffer.chunks.push(chunk);
+    importBuffer.length += chunk.length;
+  }
+
+  function finishImport(id) {
+    if (importBuffer?.id !== id) throw new Error("Invalid import transfer");
+    const serialized = importBuffer.chunks.join("");
+    importBuffer = null;
+    return importData(serialized);
+  }
+
+  function abortImport(id) { if (importBuffer?.id === id) importBuffer = null; }
 
   function addWithRetention(anchor) {
     // Another Codex window may already have rolled over this shared store.
@@ -116,13 +195,14 @@
         data = saved;
       }
     } catch {}
-    if (data.highlights.length + 1 < MAX_HIGHLIGHTS) {
+    if (!anchor && data.highlights.length < MAX_HIGHLIGHTS - 1) return false;
+    if (anchor && data.highlights.length + 1 < MAX_HIGHLIGHTS) {
       data.highlights.push(anchor);
       markChanged();
       return true;
     }
     try {
-      // Never overwrite a batch that the native host has not yet archived.
+      // Keep the request in memory. No deletion until the native host confirms disk backup.
       if (exportRetentionBackup()) {
         retentionNotice("上一批高亮备份尚未写入本地，请稍后再试或启动高亮器。");
         return false;
@@ -130,7 +210,6 @@
       const oldest = data.highlights.map((item, index) => ({ item, index }))
         .sort((a, b) => a.item.createdAt - b.item.createdAt || a.index - b.index)
         .slice(0, RETENTION_BATCH_SIZE).map(({ item }) => item);
-      const removedIds = new Set(oldest.map((item) => item.id));
       const now = Date.now();
       const backup = {
         version: 1,
@@ -139,20 +218,12 @@
         updatedAt: now,
         highlights: oldest,
       };
-      // Both writes must succeed before changing the in-memory active document.
-      localStorage.setItem(RETENTION_BACKUP_KEY, JSON.stringify(backup));
-      const next = {
-        ...data,
-        revision: data.revision + 1,
-        updatedAt: Math.max(now, data.updatedAt + 1),
-        highlights: [...data.highlights.filter((item) => !removedIds.has(item.id)), anchor],
-      };
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
-      data = next;
-      retentionNotice("已自动清理最早的 1,000 条高亮，备份已保留。");
+      pendingRetention = { backup, serialized: JSON.stringify(backup), anchor,
+        revision: data.revision, updatedAt: data.updatedAt };
+      retentionNotice("正在保存硬盘备份，完成后自动清理并添加本次高亮，请稍候。");
       return true;
-    } catch {
-      retentionNotice("无法保存高亮清理备份，未执行清理。请检查本地存储空间后重试。");
+    } catch (error) {
+      retentionNotice(`无法创建清理请求（${error.name}），原高亮已保留。`);
       return false;
     }
   }
@@ -1588,8 +1659,11 @@
     diagnostics,
     importData,
     exportData,
+    beginExport, readExportChunk, endExport,
+    beginImport, appendImportChunk, finishImport, abortImport,
     exportRetentionBackup,
     acknowledgeRetentionBackup,
+    requestRetention: () => addWithRetention(null),
   };
   ensure();
   return health();

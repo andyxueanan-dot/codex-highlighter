@@ -1,6 +1,8 @@
 # Compatibility matrix
 
-Last verified: 2026-09-05
+Last verified: 2026-09-11
+
+v1.2.10 live retention recovery: 1,999 records became 999 only after the native host saved the oldest 1,000 to disk. The archive and retained records were compared with a pre-operation snapshot, including all record contents; disk and renderer matched. The Codex process remained unchanged. Browser tests also round-tripped a Chinese/emoji document larger than the former 4 MiB transport limit in bounded chunks.
 
 v1.2.8 launcher check on Codex `26.901.5280.0` / Chromium `152.0.7977.64`: two real launch requests reused the same monitor and Codex process; the installed renderer reported v1.2.8. All 1,232 pre-update highlight IDs remained in local storage. Cold-launch and missing-port paths passed isolated behavior tests; a real cold start was not forced during the active user session. Desktop/Start menu shortcuts, running-app update, and uninstall were tested in temporary directories.
 

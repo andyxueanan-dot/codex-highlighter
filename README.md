@@ -10,7 +10,7 @@ English | [简体中文](README.zh-CN.md)
 
 <p align="center">
   <img alt="Windows" src="https://img.shields.io/badge/Windows-10%20%7C%2011-0078D4?logo=windows">
-  <img alt="Version" src="https://img.shields.io/badge/version-1.2.9-ffca28">
+  <img alt="Version" src="https://img.shields.io/badge/version-1.2.10-ffca28">
   <img alt="License" src="https://img.shields.io/badge/license-MIT-2ea44f">
 </p>
 
@@ -89,7 +89,7 @@ The installer starts the tray watcher independently through Windows. Background 
 
 ## How it works
 
-Active highlights use a rolling limit: when a new selection brings the total to 2,000, the oldest 1,000 (by creation time) are backed up and removed. If already at 2,000, the next addition leaves 1,001 active records. Recoloring or opening the app does not prune. Automatic backups remain in `%LOCALAPPDATA%\CodexHighlighter\backups\auto-prune` and are not scanned while highlighting. Backup/save failure cancels the prune. Backup files accumulate until you choose to remove them.
+Active highlights use a rolling limit: when a new selection brings the total to 2,000, the oldest 1,000 (by creation time) are backed up and removed. If already at 2,000, the next addition leaves 1,001 active records. The native monitor writes the backup directly to disk before committing the smaller active list; allow one monitoring cycle (normally about 15 seconds). No extra backup copy is placed in page storage. Closing the window before completion leaves old records intact; select again afterwards. Recoloring or opening the app does not prune. Automatic backups remain in `%LOCALAPPDATA%\CodexHighlighter\backups\auto-prune` and are not scanned while highlighting. Backup files accumulate until you choose to remove them.
 
 The helper launches Codex with a Chrome DevTools Protocol endpoint bound to `127.0.0.1`, then injects the highlighting runtime into the real Chromium renderer. Highlights use the CSS Highlights API, so the tool does not wrap or rewrite React-managed transcript nodes.
 
