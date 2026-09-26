@@ -10,7 +10,7 @@ English | [简体中文](README.zh-CN.md)
 
 <p align="center">
   <img alt="Windows" src="https://img.shields.io/badge/Windows-10%20%7C%2011-0078D4?logo=windows">
-  <img alt="Version" src="https://img.shields.io/badge/version-1.2.10-ffca28">
+  <img alt="Version" src="https://img.shields.io/badge/version-1.2.11-ffca28">
   <img alt="License" src="https://img.shields.io/badge/license-MIT-2ea44f">
 </p>
 

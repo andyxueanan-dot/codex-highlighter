@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const VERSION = "1.2.10";
+  const VERSION = "1.2.11";
   const STATE_KEY = "__CODEX_HIGHLIGHTER__";
   const STORAGE_KEY = "codex-highlighter:data:v1";
   const STYLE_ID = "codex-highlighter-style";
@@ -282,6 +282,7 @@
       scopeHash: safeString(value.scopeHash, 64),
       scopeIdentity: safeString(value.scopeIdentity, 256),
       scopeTag: safeString(value.scopeTag, 32),
+      textModel: value.textModel === "visible-math-v1" ? "visible-math-v1" : "",
       scopeLead: safeString(value.scopeLead, 128),
       scopeTail: safeString(value.scopeTail, 128),
       color: Object.hasOwn(COLORS, value.color) ? value.color : "yellow",
@@ -585,37 +586,47 @@
     return fallback || surface;
   }
 
-  function offsetWithin(scope, container, offset) {
-    if (container?.nodeType !== Node.TEXT_NODE) return -1;
+  function offsetWithin(scope, container, offset, visibleMath = false) {
+    if (!container || !scope.contains(container)) return -1;
+    let point = null;
+    if (container.nodeType !== Node.TEXT_NODE) {
+      point = document.createRange();
+      try { point.setStart(container, offset); point.collapse(true); }
+      catch { return -1; }
+    }
     let position = 0;
-    for (const node of textNodes(scope)) {
+    for (const node of textNodes(scope, visibleMath)) {
       if (node === container) {
         return position + Math.min(Math.max(0, offset), node.data.length);
       }
+      if (point && point.comparePoint(node, 0) >= 0) return position;
       position += node.data.length;
     }
-    return -1;
+    return point ? position : -1;
   }
 
   function createAnchor(range, color = "yellow") {
     const anchorRange = normalizeFormulaRange(range);
     const scope = chooseScope(anchorRange);
     if (!scope) return null;
-    const scopeText = scopedText(scope);
+    const visibleMath = Boolean(formulaScope(scope) || scope.querySelector(".katex"));
+    const scopeText = scopedText(scope, visibleMath);
     const start = offsetWithin(
       scope,
       anchorRange.startContainer,
       anchorRange.startOffset,
+      visibleMath,
     );
-    const end = offsetWithin(scope, anchorRange.endContainer, anchorRange.endOffset);
+    const end = offsetWithin(scope, anchorRange.endContainer, anchorRange.endOffset, visibleMath);
     if (start < 0 || end <= start) return null;
-    const exact = anchorRange.toString();
+    const exact = scopeText.slice(start, end);
     return sanitizeAnchor({
       id: `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`,
       contextKey: contextKey(),
       scopeHash: fingerprint(scopeText),
       scopeIdentity: scopeIdentity(scope),
       scopeTag: scope.tagName || "",
+      textModel: visibleMath ? "visible-math-v1" : "",
       scopeLead: scopeText.slice(0, 96),
       scopeTail: scopeText.slice(-96),
       color,
@@ -629,30 +640,35 @@
   }
 
   function normalizeFormulaRange(range) {
-    const start = elementForNode(range?.startContainer);
-    const end = elementForNode(range?.endContainer);
-    const formula = formulaScope(start);
-    if (!formula || formula !== formulaScope(end)) return range;
-    if (
-      !start.closest(".katex-mathml,math") &&
-      !end.closest(".katex-mathml,math")
-    ) {
-      return range;
+    if (!range) return range;
+    const normalized = range.cloneRange();
+    // Handle each endpoint independently, including prose -> MathML selections.
+    for (const side of ["end", "start"]) {
+      const element = elementForNode(range[`${side}Container`]);
+      const formula = formulaScope(element);
+      if (!formula || !element.closest(".katex-mathml")) continue;
+      const visible = formulaVisibleRoot(formula);
+      if (visible === formula) continue;
+      const nodes = textNodes(visible, true);
+      if (!nodes.length) continue;
+      if (side === "start") normalized.setStart(nodes[0], 0);
+      else normalized.setEnd(nodes.at(-1), nodes.at(-1).data.length);
     }
-    const visible = formulaVisibleRoot(formula);
-    if (!visible || visible === formula) return range;
-    const normalized = document.createRange();
-    normalized.selectNodeContents(visible);
     return normalized;
   }
 
-  function textNodes(root) {
+  function isHiddenMathText(node) {
+    return Boolean(node.parentElement?.closest(".katex-mathml"));
+  }
+
+  function textNodes(root, visibleMath = false) {
     const nodes = [];
     const traversalRoot = formulaVisibleRoot(root);
     const walker = document.createTreeWalker(traversalRoot, NodeFilter.SHOW_TEXT, {
       acceptNode(node) {
         const parent = node.parentElement;
         if (!parent) return NodeFilter.FILTER_REJECT;
+        if (visibleMath && isHiddenMathText(node)) return NodeFilter.FILTER_REJECT;
         if (
           parent.closest(
             `#${TOOLBAR_HOST_ID},#${HOVER_HOST_ID},${EDITABLE_SELECTOR},script,style,noscript`,
@@ -671,18 +687,18 @@
     return nodes;
   }
 
-  function scopedText(root) {
-    return textNodes(root)
+  function scopedText(root, visibleMath = false) {
+    return textNodes(root, visibleMath)
       .map((node) => node.data)
       .join("");
   }
 
-  function rangeFromOffsets(scope, start, end) {
+  function rangeFromOffsets(scope, start, end, visibleMath = false) {
     if (start < 0 || end <= start) return null;
     const range = document.createRange();
     let position = 0;
     let started = false;
-    for (const node of textNodes(scope)) {
+    for (const node of textNodes(scope, visibleMath)) {
       const next = position + node.data.length;
       if (!started && start >= position && start < next) {
         range.setStart(node, Math.min(node.data.length, start - position));
@@ -741,18 +757,30 @@
     const records = [];
     const byHash = new Map();
     const byIdentity = new Map();
+    const hiddenMath = new WeakMap();
     for (const scope of candidateScopes()) {
-      const text = scopedText(scope);
+      const nodes = textNodes(scope);
+      const text = nodes.map((node) => node.data).join("");
       if (!text) continue;
+      const visibleText = nodes.filter((node) => {
+        if (!hiddenMath.has(node)) hiddenMath.set(node, isHiddenMathText(node));
+        return !hiddenMath.get(node);
+      }).map((node) => node.data).join("");
       const record = {
         scope,
         text,
+        visibleText,
+        visibleHash: fingerprint(visibleText),
         hash: fingerprint(text),
         identity: scopeIdentity(scope),
       };
       records.push(record);
       if (!byHash.has(record.hash)) byHash.set(record.hash, []);
       byHash.get(record.hash).push(record);
+      if (record.visibleHash !== record.hash) {
+        if (!byHash.has(record.visibleHash)) byHash.set(record.visibleHash, []);
+        byHash.get(record.visibleHash).push(record);
+      }
       if (record.identity) {
         if (!byIdentity.has(record.identity)) byIdentity.set(record.identity, []);
         byIdentity.get(record.identity).push(record);
@@ -846,6 +874,7 @@
   }
 
   function anchorToRange(anchor, index, allowFallback) {
+    const visibleMath = anchor.textModel === "visible-math-v1";
     const currentContext = contextKey();
     if (
       anchor.contextKey &&
@@ -877,9 +906,10 @@
 
     for (const record of candidates) {
       const scope = record.scope;
-      const text = record.text;
+      if (visibleMath && anchor.scopeIdentity && record.identity !== anchor.scopeIdentity) continue;
+      const text = visibleMath ? record.visibleText : record.text;
       if (text.length < anchor.exact.length) continue;
-      const hashMatches = record.hash === anchor.scopeHash;
+      const hashMatches = (visibleMath ? record.visibleHash : record.hash) === anchor.scopeHash;
       for (const start of occurrences(text, anchor.exact)) {
         const end = start + anchor.exact.length;
         if (!hasReliableContext(anchor, text, start, end, hashMatches)) {
@@ -900,8 +930,10 @@
       }
     }
     if (!best || best.score < 80) return null;
-    const range = rangeFromOffsets(best.scope, best.start, best.end);
-    return range && range.toString() === anchor.exact ? range : null;
+    const range = rangeFromOffsets(best.scope, best.start, best.end, visibleMath);
+    // A DOM Range spanning prose and math also crosses the clipped accessibility
+    // copy. Offsets above were verified against visible text, not that raw copy.
+    return range && (visibleMath || range.toString() === anchor.exact) ? range : null;
   }
 
   function ensureStyle() {

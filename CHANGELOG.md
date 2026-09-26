@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.2.11 - 2026-09-26
+
+- Fix selections whose endpoints are elements, including selecting an entire inline mathematical symbol.
+- Normalize hidden KaTeX MathML endpoints individually, supporting selections that mix prose and inline math.
+- Store new math-containing anchors using visible text offsets, with a versioned text model that preserves legacy raw-text offsets.
+- Require matching source identity for new math anchors so repeated letters do not inherit another formula's highlight.
+- Add browser regressions for single letters, script letters, subscripts, mixed text, rerendering, recolor/delete and legacy compatibility.
+
 ## 1.2.10 - 2026-09-11
 
 - Fix retention blocked by page-storage quota: queue the requested selection in memory, write the removed batch to disk via the native host, and only then commit the smaller active list.

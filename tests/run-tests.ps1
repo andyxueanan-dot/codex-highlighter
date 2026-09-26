@@ -57,6 +57,8 @@ try {
     $env:NODE_PATH = $nodeModules
     & $node (Join-Path $projectRoot 'tests\highlighter.browser.test.js') $script $chrome
     if ($LASTEXITCODE -ne 0) { throw 'Browser behavior test failed' }
+    & $node (Join-Path $projectRoot 'tests\inline-math.browser.test.js') $script $chrome
+    if ($LASTEXITCODE -ne 0) { throw 'Inline math behavior test failed' }
     & $node (Join-Path $projectRoot 'tests\retention.browser.test.js') $script $chrome
     if ($LASTEXITCODE -ne 0) { throw 'Retention behavior test failed' }
 }
