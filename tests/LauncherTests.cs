@@ -63,22 +63,31 @@ namespace CodexHighlighter
             {
                 var cold = new FakeTarget();
                 Require(CodexLauncher.Open(cold) == CodexOpenResult.Started, "Cold launch not requested");
-                Require(string.Join(",", cold.Calls) == "probe,running,launch", "Cold launch happened more than once");
+                Require(string.Join(",", cold.Calls) == "focus,probe,running,launch", "Cold launch happened more than once");
                 cold.Calls.Clear();
                 Require(CodexLauncher.Open(cold) == CodexOpenResult.WaitingForNextLaunch, "Starting process ignored");
                 Require(!cold.Calls.Contains("launch"), "Double click launched a second process before window ready");
 
                 var ready = new FakeTarget { Running = true, Port = 9487 };
                 Require(CodexLauncher.Open(ready) == CodexOpenResult.Connected, "Existing port not reused");
-                Require(string.Join(",", ready.Calls) == "probe,attach:9487,focus", "Ready window unexpectedly relaunched");
+                Require(string.Join(",", ready.Calls) == "focus,probe,attach:9487", "Focus must precede endpoint probes");
                 var ordinary = new FakeTarget { Running = true };
                 Require(CodexLauncher.Open(ordinary) == CodexOpenResult.WaitingForNextLaunch, "Ordinary instance not respected");
-                Require(string.Join(",", ordinary.Calls) == "probe,running,focus,wait", "Ordinary instance restarted");
+                Require(string.Join(",", ordinary.Calls) == "focus,probe,running,wait", "Ordinary instance restarted");
                 ordinary.Port = 9488;
                 ordinary.Calls.Clear();
                 Require(CodexLauncher.Open(ordinary) == CodexOpenResult.Connected, "New port not rediscovered");
                 Require(ordinary.Calls.Contains("attach:9488") && !ordinary.Calls.Contains("launch"), "Reconnection relaunched app");
                 Console.WriteLine("PASS cold-open, repeated-open, existing-window, changed-port");
+                Require(PackagedCodexActivation.AppId(@"C:\Program Files\WindowsApps\OpenAI.Codex_26.924.1866.0_x64__2p2nqsd0c76g0\app\ChatGPT.exe") ==
+                    "OpenAI.Codex_2p2nqsd0c76g0!App", "Store identity lost after update");
+                Require(PackagedCodexActivation.AppId(@"D:\Programs\Codex\Codex.exe") == null,
+                    "Unpackaged app treated as Store app");
+                Require(PackagedCodexActivation.AppId(@"C:\Program Files\WindowsApps\Unrelated_1.0_x64__test\app\ChatGPT.exe") == null,
+                    "Unrelated package accepted");
+                Require(PackagedCodexActivation.AppId(@"C:\Program Files\WindowsApps\OpenAI.Codex_26.924.1866.0_x64__2p2nqsd0c76g0\app\helper.exe") == null,
+                    "Helper process accepted as desktop app");
+                Console.WriteLine("PASS Store identity and unpackaged launch fallback");
 
                 string signalName = "Local\\CodexHighlighter-test-" + Guid.NewGuid().ToString("N");
                 using (var owner = new LaunchRequestSignal(signalName))

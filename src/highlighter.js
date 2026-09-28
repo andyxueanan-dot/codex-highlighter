@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const VERSION = "1.2.11";
+  const VERSION = "1.2.13";
   const STATE_KEY = "__CODEX_HIGHLIGHTER__";
   const STORAGE_KEY = "codex-highlighter:data:v1";
   const STYLE_ID = "codex-highlighter-style";
@@ -70,6 +70,19 @@
   let routeTimer = 0;
   let applyTimer = 0;
   let applyIdleHandle = 0;
+  let applyGeneration = 0;
+  let applyContinuation = null;
+  const applyChannel = new MessageChannel();
+  applyChannel.port1.onmessage = () => {
+    const continuation = applyContinuation;
+    applyContinuation = null;
+    if (continuation) continuation();
+  };
+  const scopeCache = new Map();
+  const dirtyRoots = new Set();
+  let hoverRects = null;
+  let hoverRectsAt = 0;
+  let selectionActive = false;
   let lastContextKey = "";
   let initialFullScan = true;
   let disposed = false;
@@ -236,6 +249,12 @@
     mutationBatches: 0,
     lastToolbarMs: 0,
     maxToolbarMs: 0,
+    lastApplyWallMs: 0,
+    lastMaxSliceMs: 0,
+    lastCacheHits: 0,
+    lastRebuiltScopes: 0,
+    hoverGeometryReads: 0,
+    applyStarts: 0,
   };
 
   function fnv1a(text) {
@@ -753,27 +772,35 @@
     return result;
   }
 
-  function buildScopeIndex() {
+  function* buildScopeIndex(stats) {
     const records = [];
     const byHash = new Map();
     const byIdentity = new Map();
     const hiddenMath = new WeakMap();
+    const dirty = Array.from(dirtyRoots);
     for (const scope of candidateScopes()) {
-      const nodes = textNodes(scope);
-      const text = nodes.map((node) => node.data).join("");
-      if (!text) continue;
-      const visibleText = nodes.filter((node) => {
-        if (!hiddenMath.has(node)) hiddenMath.set(node, isHiddenMathText(node));
-        return !hiddenMath.get(node);
-      }).map((node) => node.data).join("");
-      const record = {
-        scope,
-        text,
-        visibleText,
-        visibleHash: fingerprint(visibleText),
-        hash: fingerprint(text),
-        identity: scopeIdentity(scope),
-      };
+      let record = scopeCache.get(scope);
+      if (record && !dirty.some(root => root.contains(scope) || scope.contains(root))) {
+        stats.hits += 1;
+      } else {
+        const nodes = textNodes(scope);
+        const text = nodes.map((node) => node.data).join("");
+        if (!text) { scopeCache.delete(scope); yield; continue; }
+        const visibleText = nodes.filter((node) => {
+          if (!hiddenMath.has(node)) hiddenMath.set(node, isHiddenMathText(node));
+          return !hiddenMath.get(node);
+        }).map((node) => node.data).join("");
+        record = {
+          scope,
+          text,
+          visibleText,
+          visibleHash: fingerprint(visibleText),
+          hash: fingerprint(text),
+          identity: scopeIdentity(scope),
+        };
+        scopeCache.set(scope, record);
+        stats.rebuilt += 1;
+      }
       records.push(record);
       if (!byHash.has(record.hash)) byHash.set(record.hash, []);
       byHash.get(record.hash).push(record);
@@ -785,6 +812,7 @@
         if (!byIdentity.has(record.identity)) byIdentity.set(record.identity, []);
         byIdentity.get(record.identity).push(record);
       }
+      yield;
     }
     return { records, byHash, byIdentity };
   }
@@ -959,41 +987,83 @@
     applyTimer = 0;
     applyIdleHandle = 0;
     if (disposed || !supportsHighlights) return;
+    performanceStats.applyStarts += 1;
     const started = performance.now();
+    const generation = applyGeneration;
+    const stats = { hits: 0, rebuilt: 0, cpu: 0, maxSlice: 0 };
+    const job = rebuildHighlights(stats);
+    function step() {
+      if (disposed || generation !== applyGeneration) return;
+      const sliceStart = performance.now();
+      let result;
+      do {
+        result = job.next();
+      } while (!result.done && performance.now() - sliceStart < 6);
+      const elapsed = performance.now() - sliceStart;
+      stats.cpu += elapsed;
+      stats.maxSlice = Math.max(stats.maxSlice, elapsed);
+      if (!result.done) {
+        // Timer clamping in hidden Codex windows can turn every zero-delay slice
+        // into a one-second wait. Posted tasks yield without that timer backlog.
+        applyContinuation = step;
+        applyChannel.port2.postMessage(null);
+        return;
+      }
+      performanceStats.applyCount += 1;
+      performanceStats.lastApplyMs = Math.round(stats.cpu * 10) / 10;
+      performanceStats.maxApplyMs = Math.max(performanceStats.maxApplyMs, performanceStats.lastApplyMs);
+      performanceStats.lastApplyWallMs = Math.round((performance.now() - started) * 10) / 10;
+      performanceStats.lastMaxSliceMs = Math.round(stats.maxSlice * 10) / 10;
+      performanceStats.lastCacheHits = stats.hits;
+      performanceStats.lastRebuiltScopes = stats.rebuilt;
+    }
+    step();
+  }
+
+  function* rebuildHighlights(stats) {
     ensureStyle();
     const groups = new Map(
       Object.keys(COLORS).map((name) => [name, new Highlight()]),
     );
-    const index = buildScopeIndex();
+    const index = yield* buildScopeIndex(stats);
     const previouslyResolved = new Set(resolvedRanges.keys());
-    resolvedRanges.clear();
+    const nextRanges = new Map();
     let fallbackAnchors = 0;
     for (const anchor of data.highlights) {
       const allowFallback = initialFullScan || previouslyResolved.has(anchor.id);
       if (allowFallback) fallbackAnchors += 1;
       const range = anchorToRange(anchor, index, allowFallback);
-      if (!range) continue;
-      groups.get(anchor.color || "yellow").add(range);
-      resolvedRanges.set(anchor.id, range);
+      if (range) {
+        groups.get(anchor.color || "yellow").add(range);
+        nextRanges.set(anchor.id, range);
+      }
+      yield;
     }
+    // Commit only a complete, current generation; canceled jobs never replace
+    // the visible highlights or discard invalidations from a streaming update.
+    resolvedRanges.clear();
+    for (const [id, range] of nextRanges) resolvedRanges.set(id, range);
+    const liveScopes = new Set(index.records.map(record => record.scope));
+    for (const scope of scopeCache.keys()) if (!liveScopes.has(scope)) scopeCache.delete(scope);
+    dirtyRoots.clear();
+    invalidateHoverGeometry();
     CSS.highlights.delete(HIGHLIGHT_PREFIX);
     for (const [name, group] of groups) {
       CSS.highlights.set(`${HIGHLIGHT_PREFIX}-${name}`, group);
     }
     initialFullScan = false;
-    const elapsed = performance.now() - started;
-    performanceStats.applyCount += 1;
-    performanceStats.lastApplyMs = Math.round(elapsed * 10) / 10;
-    performanceStats.maxApplyMs = Math.max(
-      performanceStats.maxApplyMs,
-      performanceStats.lastApplyMs,
-    );
     performanceStats.lastCandidateScopes = index.records.length;
     performanceStats.lastFallbackAnchors = fallbackAnchors;
   }
 
   function scheduleApply(delay = 1000) {
     if (disposed) return;
+    // Coalesce continuous clock/stream updates without indefinitely moving the
+    // deadline. Explicit edits still preempt the background job immediately.
+    if (delay > 0 && (applyTimer || applyIdleHandle)) return;
+    if (initialFullScan) delay = Math.min(delay, 20);
+    applyGeneration += 1;
+    applyContinuation = null;
     if (applyTimer) clearTimeout(applyTimer);
     if (applyIdleHandle && "cancelIdleCallback" in window) {
       cancelIdleCallback(applyIdleHandle);
@@ -1001,7 +1071,7 @@
     }
     applyTimer = setTimeout(() => {
       applyTimer = 0;
-      if (delay === 0 || !("requestIdleCallback" in window)) {
+      if (delay === 0 || initialFullScan || !("requestIdleCallback" in window)) {
         applyHighlights();
         return;
       }
@@ -1323,8 +1393,16 @@
   }
 
   function anchorAtPoint(x, y) {
-    for (const [id, range] of resolvedRanges) {
-      for (const rect of range.getClientRects()) {
+    if (!hoverRects || performance.now() - hoverRectsAt > 250) {
+      hoverRects = [];
+      for (const [id, range] of resolvedRanges) {
+        if (!range.startContainer.isConnected || !range.endContainer.isConnected) continue;
+        performanceStats.hoverGeometryReads += 1;
+        for (const rect of range.getClientRects()) hoverRects.push({ id, rect });
+      }
+      hoverRectsAt = performance.now();
+    }
+    for (const { id, rect } of hoverRects) {
         if (
           x >= rect.left - 1 &&
           x <= rect.right + 1 &&
@@ -1333,7 +1411,6 @@
         ) {
           return { id, rect };
         }
-      }
     }
     return null;
   }
@@ -1458,16 +1535,13 @@
   }
 
   function onPointerMove(event) {
+    // No selection/layout queries in the high-frequency pointer callback.
+    if (event.buttons || selectionActive || !resolvedRanges.size) return;
     if (
       toolbarHost?.contains(event.target) ||
       hoverHost?.contains(event.target)
     ) {
       if (hoverHideTimer) clearTimeout(hoverHideTimer);
-      return;
-    }
-    const selection = getSelection();
-    if (selection && !selection.isCollapsed) {
-      scheduleHideHoverToolbar();
       return;
     }
     const x = event.clientX;
@@ -1477,10 +1551,21 @@
     if (hoverMoveTimer) return;
     hoverMoveTimer = setTimeout(() => {
       hoverMoveTimer = 0;
+      if (selectionActive || disposed) return;
       const hit = anchorAtPoint(hoverPointerX, hoverPointerY);
       if (hit) showHoverToolbar(hit.id, hit.rect);
       else scheduleHideHoverToolbar();
     }, 80);
+  }
+
+  function invalidateHoverGeometry() {
+    hoverRects = null;
+  }
+
+  function onSelectionChange() {
+    const selection = getSelection();
+    selectionActive = Boolean(selection && !selection.isCollapsed);
+    if (selectionActive) hideHoverToolbar();
   }
 
   function onKeyDown(event) {
@@ -1588,6 +1673,9 @@
   function mutationIsRelevant(record) {
     const element = elementForNode(record.target);
     if (!element) return false;
+    if (record.type === "attributes" && record.attributeName === "class" &&
+        !element.closest(FORMULA_SCOPE_SELECTOR) &&
+        !/katex|mjx-|MathJax/.test(record.oldValue || "")) return false;
     if (
       element.closest(
         `${EDITABLE_SELECTOR},#${TOOLBAR_HOST_ID},#${HOVER_HOST_ID}`,
@@ -1595,31 +1683,56 @@
     ) {
       return false;
     }
-    return record.type === "childList" || record.type === "characterData";
+    return record.type === "childList" || record.type === "characterData" || record.type === "attributes";
   }
 
   function onTranscriptMutations(records) {
-    if (!records.some(mutationIsRelevant)) return;
+    let relevant = false;
+    for (const record of records) {
+      if (!mutationIsRelevant(record)) continue;
+      relevant = true;
+      const element = elementForNode(record.target);
+      // Structural edits can change formula/table ordinals in their owner.
+      const root = record.type === "characterData" ? element :
+        element.closest(`${RESPONSE_ANNOTATION_SELECTOR},[data-message-id],[data-turn-id],article,[role='article']`) || element.parentElement || element;
+      if (!Array.from(dirtyRoots).some(existing => existing.contains(root))) {
+        for (const existing of dirtyRoots) if (root.contains(existing)) dirtyRoots.delete(existing);
+        dirtyRoots.add(root);
+      }
+    }
+    if (!relevant) return;
+    invalidateHoverGeometry();
     performanceStats.mutationBatches += 1;
     scheduleApply();
   }
 
   function refreshSurfaceObservers() {
     const surfaces = new Set(transcriptSurfaces());
+    let changed = false;
     for (const [surface, surfaceObserver] of surfaceObservers) {
       if (surfaces.has(surface) && surface.isConnected) continue;
       surfaceObserver.disconnect();
       surfaceObservers.delete(surface);
+      changed = true;
     }
     for (const surface of surfaces) {
       if (surfaceObservers.has(surface)) continue;
+      changed = true;
       const surfaceObserver = new MutationObserver(onTranscriptMutations);
       surfaceObserver.observe(surface, {
         childList: true,
         subtree: true,
         characterData: true,
+        attributes: true,
+        attributeOldValue: true,
+        attributeFilter: ["data-message-id", "data-turn-id", "data-testid", "id",
+          "data-response-annotation-conversation", "data-response-annotation-target", "class", "role", "contenteditable"],
       });
       surfaceObservers.set(surface, surfaceObserver);
+    }
+    if (changed) {
+      scopeCache.clear();
+      scheduleApply();
     }
   }
 
@@ -1632,12 +1745,21 @@
     document.removeEventListener("pointerup", onPointerUp, true);
     document.removeEventListener("pointermove", onPointerMove, true);
     document.removeEventListener("keydown", onKeyDown, true);
+    document.removeEventListener("selectionchange", onSelectionChange);
+    document.removeEventListener("scroll", invalidateHoverGeometry, true);
+    window.removeEventListener("resize", invalidateHoverGeometry);
     for (const surfaceObserver of surfaceObservers.values()) {
       surfaceObserver.disconnect();
     }
     surfaceObservers.clear();
     if (routeTimer) clearInterval(routeTimer);
     if (applyTimer) clearTimeout(applyTimer);
+    applyGeneration += 1;
+    applyContinuation = null;
+    applyChannel.port1.close();
+    applyChannel.port2.close();
+    scopeCache.clear();
+    dirtyRoots.clear();
     if (applyIdleHandle && "cancelIdleCallback" in window) {
       cancelIdleCallback(applyIdleHandle);
     }
@@ -1661,6 +1783,10 @@
   document.addEventListener("pointerup", onPointerUp, true);
   document.addEventListener("pointermove", onPointerMove, true);
   document.addEventListener("keydown", onKeyDown, true);
+  document.addEventListener("selectionchange", onSelectionChange);
+  document.addEventListener("scroll", invalidateHoverGeometry, true);
+  window.addEventListener("resize", invalidateHoverGeometry);
+  onSelectionChange();
   refreshSurfaceObservers();
   lastContextKey = contextKey();
   routeTimer = setInterval(() => {
@@ -1668,6 +1794,7 @@
     if (current !== lastContextKey) {
       lastContextKey = current;
       initialFullScan = true;
+      scopeCache.clear();
       hideToolbar();
       hideHoverToolbar();
       scheduleApply(0);

@@ -1,5 +1,21 @@
 # Changelog
 
+## 1.2.13 - 2026-09-28
+
+- Cache unchanged text-scope records and invalidate affected owners after text, structure, or identity changes.
+- Split re-anchoring into cooperative posted-task slices; commit only complete, current passes. Avoid background-window timer clamping and indefinitely postponed paints during continuous updates.
+- Remove selection queries from pointer-move callbacks and cache hover geometry with scroll, resize, mutation, and repaint invalidation.
+- Expose CPU, wall-time, slice, and cache diagnostics. Add regressions for 1,374 records, 900 scopes, stale-cache removal, continuous updates, pointer storms, cleanup, and throttled timers.
+- Preserve saved anchors, source-matching rules, retention backups, and running Codex processes.
+
+## 1.2.12 - 2026-09-27
+
+- Focus the existing app before probing debugging endpoints; a missing connection no longer delays showing the window.
+- Use the clicked shortcut process's foreground permission and enumerate visible app windows instead of relying on a cached main-window handle.
+- Activate Store installations through their registered Windows app identity; preserve the existing profile and retain direct launch for unpackaged installations.
+- Report explicit launch failures and unconfirmed startup after 45 seconds instead of treating an accepted launch request as successful highlighting.
+- Keep normal opens and background recovery non-destructive: no forced exit, profile replacement, or automatic restart.
+
 ## 1.2.11 - 2026-09-26
 
 - Fix selections whose endpoints are elements, including selecting an entire inline mathematical symbol.

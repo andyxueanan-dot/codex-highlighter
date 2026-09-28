@@ -1,5 +1,5 @@
 param(
-    [string]$Version = '1.2.11'
+    [string]$Version = '1.2.13'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -45,10 +45,17 @@ foreach ($file in $files) {
     Copy-Item -LiteralPath (Join-Path $projectRoot $file.Source) `
         -Destination (Join-Path $packageDirectory $file.Destination) -Force
 }
-Copy-Item -LiteralPath (Join-Path $projectRoot 'assets') `
-    -Destination (Join-Path $packageDirectory 'assets') -Recurse -Force
-Copy-Item -LiteralPath (Join-Path $projectRoot 'docs') `
-    -Destination (Join-Path $packageDirectory 'docs') -Recurse -Force
+# Do not distribute untracked research, drafts, or local screenshots merely
+# because they happen to be under docs/ or assets/ in the developer checkout.
+$publicFiles = @(git -c "safe.directory=$projectRoot" -c core.quotepath=false -C $projectRoot ls-files -- assets docs)
+if ($LASTEXITCODE -ne 0 -or $publicFiles.Count -eq 0) {
+    throw 'Could not enumerate version-controlled release assets and documentation.'
+}
+foreach ($relativePath in $publicFiles) {
+    $destination = Join-Path $packageDirectory $relativePath
+    New-Item -ItemType Directory -Path (Split-Path -Parent $destination) -Force | Out-Null
+    Copy-Item -LiteralPath (Join-Path $projectRoot $relativePath) -Destination $destination -Force
+}
 
 if (Test-Path -LiteralPath $archivePath) { Remove-Item -LiteralPath $archivePath -Force }
 if (Test-Path -LiteralPath $checksumPath) { Remove-Item -LiteralPath $checksumPath -Force }

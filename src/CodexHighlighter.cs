@@ -18,8 +18,8 @@ using System.Windows.Forms;
 [assembly: AssemblyTitle("Codex Highlighter")]
 [assembly: AssemblyDescription("Persistent yellow text highlighting for the Codex desktop transcript")]
 [assembly: AssemblyProduct("Codex Highlighter")]
-[assembly: AssemblyVersion("1.2.11.0")]
-[assembly: AssemblyFileVersion("1.2.11.0")]
+[assembly: AssemblyVersion("1.2.13.0")]
+[assembly: AssemblyFileVersion("1.2.13.0")]
 
 namespace CodexHighlighter
 {
@@ -43,7 +43,14 @@ namespace CodexHighlighter
             {
                 if (!created)
                 {
-                    if (!HasArgument(args, "--startup")) launchRequest.Request();
+                    if (!HasArgument(args, "--startup"))
+                    {
+                        // This short-lived process was launched by the user's click.
+                        // Use/transfer its foreground permission before returning to
+                        // the background tray process (which may not have permission).
+                        CodexProcessManager.FocusFromShortcut();
+                        launchRequest.Request();
+                    }
                     return 0;
                 }
 
@@ -250,15 +257,29 @@ namespace CodexHighlighter
                 Log.Write("Open Codex request completed: " + result);
                 if (result == CodexOpenResult.WaitingForNextLaunch)
                 {
-                    trayIcon.ShowBalloonTip(6000, "Codex 已打开",
+                    trayIcon.ShowBalloonTip(6000, "检测到 Codex 正在运行",
                         "当前窗口尚未启用高亮。下次正常退出后，从桌面“Codex（带高亮）”打开即可。",
                         ToolTipIcon.Info);
+                }
+                else if (result == CodexOpenResult.Started)
+                {
+                    // Accepting a launch request is not proof that a window or
+                    // highlighter exists. Keep the UI responsive while verifying.
+                    Stopwatch startup = Stopwatch.StartNew();
+                    while (!host.IsActive && startup.Elapsed < TimeSpan.FromSeconds(45))
+                        await Task.Delay(500);
+                    if (!host.IsActive)
+                        throw new InvalidOperationException(
+                            "Windows 已接受启动请求，但 45 秒内未能确认高亮已启用。\r\n" +
+                            "请查看托盘状态和日志；不要反复重启或切换账号。\r\n" + AppPaths.LogFile);
                 }
             }
             catch (Exception exception)
             {
                 Log.Write("Open Codex failed", exception);
-                trayIcon.ShowBalloonTip(6000, "无法打开 Codex", exception.Message, ToolTipIcon.Warning);
+                MessageBox.Show("无法完成启动：\r\n\r\n" + exception.Message +
+                    "\r\n\r\n不会自动关闭或重启现有 Codex。", "Codex Highlighter",
+                    MessageBoxButtons.OK, MessageBoxIcon.Warning);
             }
             finally
             {
@@ -379,7 +400,7 @@ namespace CodexHighlighter
 
     internal sealed class HighlighterHost : IDisposable
     {
-        private const string Version = "1.2.11";
+        private const string Version = "1.2.13";
         private const int DefaultPort = 9460;
         private const int HealthyMonitorInterval = 15000;
         private const int DisconnectedMonitorInterval = 5000;
@@ -982,7 +1003,7 @@ namespace CodexHighlighter
             throw new FileNotFoundException("没有找到 Codex 桌面应用。请先从官方渠道安装 Codex。");
         }
 
-        private static string FindFromRunningProcess()
+        internal static string FindFromRunningProcess()
         {
             foreach (Process process in Process.GetProcessesByName("ChatGPT"))
             {
@@ -1046,6 +1067,34 @@ namespace CodexHighlighter
         private static extern bool IsIconic(IntPtr window);
         [DllImport("user32.dll")]
         private static extern bool ShowWindowAsync(IntPtr window, int command);
+        [DllImport("user32.dll")]
+        private static extern bool AllowSetForegroundWindow(int processId);
+        [DllImport("user32.dll")]
+        private static extern bool EnumWindows(WindowCallback callback, IntPtr parameter);
+        [DllImport("user32.dll")]
+        private static extern bool IsWindowVisible(IntPtr window);
+        [DllImport("user32.dll")]
+        private static extern uint GetWindowThreadProcessId(IntPtr window, out int processId);
+        private delegate bool WindowCallback(IntPtr window, IntPtr parameter);
+
+        internal static void FocusFromShortcut()
+        {
+            try
+            {
+                string executable = CodexInstallLocator.FindFromRunningProcess();
+                if (executable != null) Focus(executable);
+                string self = Process.GetCurrentProcess().MainModule.FileName;
+                foreach (Process process in MatchingProcesses(self))
+                {
+                    using (process)
+                    {
+                        if (process.Id != Process.GetCurrentProcess().Id)
+                            AllowSetForegroundWindow(process.Id);
+                    }
+                }
+            }
+            catch (Exception exception) { Log.Write("Shortcut foreground handoff failed", exception); }
+        }
 
         internal static bool IsRunning(string executable)
         {
@@ -1106,15 +1155,34 @@ namespace CodexHighlighter
 
         internal static void Focus(string executable)
         {
-            List<Process> roots = RootProcesses(executable);
+            List<Process> roots = MatchingProcesses(executable);
             try
             {
-                foreach (Process process in roots)
+                HashSet<int> ids = new HashSet<int>();
+                foreach (Process process in roots) ids.Add(process.Id);
+                bool found = false;
+                bool focused = false;
+                // Owl/Chromium can own multiple top-level windows. MainWindowHandle
+                // may refer to a hidden utility window instead of the visible app.
+                EnumWindows(delegate(IntPtr window, IntPtr parameter)
                 {
-                    IntPtr window = process.MainWindowHandle;
+                    int pid;
+                    GetWindowThreadProcessId(window, out pid);
+                    if (!ids.Contains(pid) || !IsWindowVisible(window)) return true;
+                    found = true;
                     if (IsIconic(window)) ShowWindowAsync(window, 9);
-                    SetForegroundWindow(window);
-                    break;
+                    AllowSetForegroundWindow(pid);
+                    focused = SetForegroundWindow(window);
+                    return !focused;
+                }, IntPtr.Zero);
+                if (roots.Count > 0)
+                {
+                    Log.Write("Focus Codex: visible=" + found + ", foreground=" + focused);
+                    if (!focused)
+                    {
+                        try { PackagedCodexActivation.TryActivate(executable, ""); }
+                        catch (Exception exception) { Log.Write("Windows window activation failed", exception); }
+                    }
                 }
             }
             finally { DisposeProcesses(roots); }
@@ -1177,12 +1245,21 @@ namespace CodexHighlighter
 
         internal static void Launch(string executable, int port)
         {
+            string arguments = "--remote-debugging-address=127.0.0.1 --remote-debugging-port=" + port;
+            // Let Windows initialize the Store app's package identity and lifecycle.
+            // Do not silently retry a failed activation via a second launch path.
+            if (PackagedCodexActivation.TryActivate(executable, arguments)) return;
             ProcessStartInfo info = new ProcessStartInfo();
             info.FileName = executable;
-            info.Arguments = "--remote-debugging-address=127.0.0.1 --remote-debugging-port=" + port;
+            info.Arguments = arguments;
             info.WorkingDirectory = Path.GetDirectoryName(executable);
             info.UseShellExecute = false;
-            using (Process process = Process.Start(info)) { }
+            info.EnvironmentVariables.Remove("ELECTRON_RUN_AS_NODE");
+            using (Process process = Process.Start(info))
+            {
+                if (process.WaitForExit(750) && process.ExitCode != 0)
+                    throw new InvalidOperationException("Codex 启动进程退出，退出码：" + process.ExitCode);
+            }
         }
     }
 
